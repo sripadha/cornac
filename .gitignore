@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# Virtual envs
+.venv/
+venv/
+
+# uv
+.uv/
+
+# Env / secrets
+.env
+*.local
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+
+# Test / cache
+.pytest_cache/
+.ruff_cache/
+
+# Benchmark artifacts (keep results.md, ignore raw logs)
+benchmark/runs/
