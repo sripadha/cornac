@@ -77,6 +77,12 @@ The project is built as a **capability ladder** — each rung is a runnable demo
 | 4 | + Static workflow | planned |
 | 5 | + Dynamic harness (this package) | 🚧 in progress |
 
+**Tooling so far:** 8 built-in tools (`read_file`, `write_file`, `list_dir`, `grep`,
+`run_bash`, `run_python`, `web_search`, `web_fetch`) confined to a `Workspace` sandbox.
+The agent chains them across loop iterations and recovers from its own errors — see
+[examples/multistep_trace.py](examples/multistep_trace.py) and
+[docs/breakdown/tools-and-workspace.md](docs/breakdown/tools-and-workspace.md).
+
 Then: a permission system, lifecycle hooks, sub-agents, and a 15-task benchmark
 showing the success-rate climb across the ladder — all on the same weak model.
 
