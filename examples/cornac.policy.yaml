@@ -1,0 +1,32 @@
+# Example cornac permission policy.
+#
+# Load it with:  Policy.from_yaml("examples/cornac.policy.yaml")
+#
+# Each tool maps to either a plain decision ("allow" / "deny" / "ask"), or — for
+# command-bearing tools like run_bash — a dict with deny/allow substring lists plus a
+# default. deny is checked first (it wins), then allow; if neither matches, the default
+# applies. Any tool not listed falls back to the top-level `default`.
+
+default: ask          # anything not listed below -> ask the human
+
+tools:
+  # read-only, safe -> auto-allow
+  read_file: allow
+  list_dir: allow
+  grep: allow
+  get_current_time: allow
+  web_search: allow
+  web_fetch: allow
+
+  # mutating -> ask first
+  write_file: ask
+
+  # arbitrary code -> deny the obviously destructive, ask about the rest
+  run_bash:
+    deny: ["rm -rf", "sudo", "mkfs", "dd if=", ":(){"]
+    allow: ["pytest", "ls", "git status", "git diff"]
+    default: ask
+  run_python: ask
+
+  # sub-agents (Week 4) -> the parent agent decides delegation
+  spawn_agent: allow

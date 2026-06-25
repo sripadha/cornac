@@ -20,6 +20,9 @@ Quick start:
 
 from cornac.core.agent import Agent
 from cornac.core.messages import Message, ToolCall, ToolResult
+from cornac.hooks.bus import HookBus
+from cornac.permissions.policy import Decision, Policy
+from cornac.permissions.prompt import cli_ask
 from cornac.tools.base import Tool, tool
 from cornac.tools.registry import ToolRegistry
 
@@ -33,5 +36,9 @@ __all__ = [
     "Tool",
     "tool",
     "ToolRegistry",
+    "Policy",
+    "Decision",
+    "cli_ask",
+    "HookBus",
     "__version__",
 ]

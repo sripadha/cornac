@@ -83,6 +83,13 @@ The agent chains them across loop iterations and recovers from its own errors â€
 [examples/multistep_trace.py](examples/multistep_trace.py) and
 [docs/breakdown/tools-and-workspace.md](docs/breakdown/tools-and-workspace.md).
 
+**Permissions & hooks:** tool calls pass through an ALLOW/DENY/ASK policy (YAML or
+in-code) with an interactive `[y/n/a/e]` approval prompt; lifecycle **hooks** let you
+observe the loop without copying it. See
+[examples/permissions_demo.py](examples/permissions_demo.py),
+[examples/hook_trace.py](examples/hook_trace.py), and
+[docs/breakdown/permissions-and-hooks.md](docs/breakdown/permissions-and-hooks.md).
+
 Then: a permission system, lifecycle hooks, sub-agents, and a 15-task benchmark
 showing the success-rate climb across the ladder â€” all on the same weak model.
 
