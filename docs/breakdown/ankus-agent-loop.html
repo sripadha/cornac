@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ankus — Anatomy of the Agent Harness</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%231c1917'/%3E%3Cpath d='M20 46c0-14 6-24 12-24s12 10 12 24' fill='none' stroke='%23f59e0b' stroke-width='4' stroke-linecap='round'/%3E%3Ccircle cx='32' cy='16' r='5' fill='%23fbbf24'/%3E%3C/svg%3E">
+<style>
+  :root {
+    --bg: #1c1917;          /* warm stone-black */
+    --panel: #292524;
+    --panel-2: #322e2b;
+    --ink: #e7e5e4;
+    --muted: #a8a29e;
+    --amber: #f59e0b;
+    --amber-soft: #fbbf24;
+    --green: #4ade80;
+    --red: #f87171;
+    --blue: #7dd3fc;
+    --border: #44403c;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background:
+      radial-gradient(1200px 600px at 80% -10%, rgba(245,158,11,.08), transparent 60%),
+      var(--bg);
+    color: var(--ink);
+    font-family: ui-sans-serif, system-ui, "Segoe UI", Roboto, sans-serif;
+    line-height: 1.6;
+    padding: 48px 24px 80px;
+  }
+  .wrap { max-width: 1080px; margin: 0 auto; }
+  header { margin-bottom: 40px; }
+  .kicker {
+    color: var(--amber); font-weight: 700; letter-spacing: .18em;
+    text-transform: uppercase; font-size: 13px;
+  }
+  h1 { font-size: 40px; line-height: 1.15; margin: 8px 0 12px; font-weight: 800; }
+  .lede { color: var(--muted); font-size: 18px; max-width: 62ch; }
+  .lede strong { color: var(--ink); }
+  h2 { font-size: 24px; margin: 48px 0 6px; }
+  .sub { color: var(--muted); margin-bottom: 18px; max-width: 70ch; }
+  .card {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 14px; padding: 22px 24px;
+  }
+  .diagram { overflow-x: auto; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; }
+  .layer { border-top: 3px solid var(--amber); }
+  .layer.w3 { border-top-color: var(--blue); }
+  .layer h3 { font-size: 16px; margin-bottom: 2px; }
+  .layer .file { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px; color: var(--amber-soft); }
+  .layer.w3 .file { color: var(--blue); }
+  .layer p { font-size: 14px; color: var(--muted); margin-top: 8px; }
+  .trace { list-style: none; display: flex; flex-direction: column; gap: 10px; }
+  .trace li {
+    display: grid; grid-template-columns: 110px 1fr; gap: 14px; align-items: baseline;
+    background: var(--panel-2); border: 1px solid var(--border);
+    border-radius: 10px; padding: 12px 16px; font-size: 14.5px;
+  }
+  .role { font-family: ui-monospace, Menlo, Consolas, monospace; font-weight: 700; font-size: 13px; }
+  .r-system { color: var(--muted); } .r-user { color: var(--green); }
+  .r-assistant { color: var(--amber-soft); } .r-tool { color: var(--blue); }
+  .trace .note { color: var(--muted); font-size: 13px; }
+  code { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: .92em;
+         background: rgba(245,158,11,.1); padding: 1px 6px; border-radius: 6px; }
+  table { width: 100%; border-collapse: collapse; font-size: 14.5px; }
+  th { text-align: left; color: var(--muted); font-size: 12px; letter-spacing: .08em;
+       text-transform: uppercase; padding: 8px 12px; border-bottom: 1px solid var(--border); }
+  td { padding: 10px 12px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  tr:last-child td { border-bottom: none; }
+  .pill { display: inline-block; font-family: ui-monospace, monospace; font-size: 12px;
+          font-weight: 700; padding: 2px 10px; border-radius: 999px; }
+  .p-allow { background: rgba(74,222,128,.14); color: var(--green); }
+  .p-deny  { background: rgba(248,113,113,.14); color: var(--red); }
+  .p-ask   { background: rgba(245,158,11,.16); color: var(--amber-soft); }
+  .thesis {
+    margin-top: 56px; border-left: 4px solid var(--amber);
+    background: var(--panel); border-radius: 0 14px 14px 0; padding: 22px 26px;
+    font-size: 17px;
+  }
+  footer { margin-top: 48px; color: var(--muted); font-size: 13px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <div class="kicker">ankus · agent harness</div>
+  <h1>The agent isn’t the model — it’s the harness.</h1>
+  <p class="lede">One loop, four layers underneath it, and two Week-3 guards slotted in
+  without changing its shape. This is the whole of <strong>ankus</strong>
+  (code currently <code>cornac</code>; rename in progress).</p>
+</header>
+
+<h2>The loop, with the Week-3 gate in place</h2>
+<p class="sub">Every feature of the harness is a stop on this circuit. Follow a user
+message clockwise: the model either answers (exit) or orders tools — and every order
+passes the hook and permission checkpoints before it runs.</p>
+<div class="card diagram">
+  <pre class="mermaid">
+---
+config:
+  layout: elk
+  look: classic
+  theme: base
+  themeVariables:
+    fontSize: "15px"
+    primaryColor: "#292524"
+    primaryTextColor: "#e7e5e4"
+    primaryBorderColor: "#78716c"
+    lineColor: "#a8a29e"
+    clusterBkg: "#22201e"
+    clusterBorder: "#44403c"
+---
+flowchart TD
+  U["🧑 user message<br/><i>appended to messages[]</i>"] --> C
+  subgraph LOOP ["the agent loop &nbsp;·&nbsp; core/agent.py &nbsp;·&nbsp; max_steps rail"]
+    C["provider.complete(messages, schemas)<br/><i>neutral in → native API → neutral out</i>"] --> W{"wants_tools?"}
+    W -- "no" --> DONE(["return final text ✅"])
+    W -- "yes — for each ToolCall" --> H1[/"🔔 fire pre_tool_use"/]
+    H1 --> P{"policy.check(call)"}
+    P -- "ALLOW" --> X["registry.execute(call)<br/><i>never raises — errors become results</i>"]
+    P -- "ASK" --> A{"approver<br/>[y/n/a/e]"}
+    A -- "allow" --> X
+    A -- "deny" --> D["error ToolResult:<br/>'Permission denied'"]
+    P -- "DENY" --> D
+    X --> H2[/"🔔 fire post_tool_use"/]
+    D --> H2
+    H2 --> F["append result to messages[]<br/><i>the model will SEE it next turn</i>"]
+    F --> C
+  end
+  style DONE fill:#14321f,stroke:#4ade80,color:#d1fae5
+  style D fill:#3b1d1d,stroke:#f87171,color:#fecaca
+  style U fill:#1f2c38,stroke:#7dd3fc,color:#e0f2fe
+  </pre>
+</div>
+
+<h2>The four layers under the loop</h2>
+<p class="sub">The loop stays ~15 lines because every hard thing is pushed down into a
+single-purpose module. Weeks 1–2 built the amber layers; Week 3 added the blue ones.</p>
+<div class="grid">
+  <div class="card layer"><h3>1 · Messages</h3><div class="file">core/messages.py</div>
+    <p>The shared vocabulary. A conversation is a growing <code>list[Message]</code> —
+    the agent’s only memory. <code>ToolCall</code> is the order ticket,
+    <code>ToolResult</code> the plate that comes back.</p></div>
+  <div class="card layer"><h3>2 · Tools + Registry</h3><div class="file">tools/</div>
+    <p>Nine tools behind one 4-part contract (name · description · schema · run).
+    The registry dispatches by name and turns every failure into an error result —
+    <em>never</em> a crash.</p></div>
+  <div class="card layer"><h3>3 · Providers</h3><div class="file">providers/</div>
+    <p>The firewall. Anthropic and Ollama adapters translate neutral ↔ native at the
+    edge, so swapping Claude for a local Qwen changes <em>one line</em>.</p></div>
+  <div class="card layer"><h3>4 · The Loop</h3><div class="file">core/agent.py</div>
+    <p>Ask → done? → run tools → feed results back → ask again. The
+    <code>wants_tools</code> check is the hinge; <code>max_steps</code> is the rail.</p></div>
+  <div class="card layer w3"><h3>5 · Permissions</h3><div class="file">permissions/</div>
+    <p>The rulebook (<code>ALLOW/DENY/ASK</code>) plus a swappable human approver.
+    The real gate for arbitrary-code tools the sandbox can’t fence.</p></div>
+  <div class="card layer w3"><h3>6 · Hooks</h3><div class="file">hooks/bus.py</div>
+    <p>Publish/subscribe events at fixed loop points. Observers watch without copying
+    the loop; a broken hook can never take the agent down.</p></div>
+</div>
+
+<h2>One request, traced</h2>
+<p class="sub">“What time is it in Tokyo?” — watch the memory grow. Two model turns,
+stitched together by feeding the tool result back.</p>
+<div class="card">
+  <ul class="trace">
+    <li><span class="role r-system">system</span><span>“You are a concise assistant…” <span class="note">— seeded at construction</span></span></li>
+    <li><span class="role r-user">user</span><span>“What is the current time in Tokyo?”</span></li>
+    <li><span class="role r-assistant">assistant</span><span>(no text) → <code>get_current_time({timezone: "Asia/Tokyo"})</code> <span class="note">— an order, not an answer</span></span></li>
+    <li><span class="role r-tool">tool</span><span>“2026-07-14 21:04:50 JST” <span class="note">— the plate, appended so the model sees it</span></span></li>
+    <li><span class="role r-assistant">assistant</span><span>“It’s 9:04 PM in Tokyo.” <span class="note">— no tool calls → loop returns ✅</span></span></li>
+  </ul>
+</div>
+
+<h2>The permission ladder</h2>
+<p class="sub">Four checks in priority order — first match wins. Deny patterns are
+tested before allow patterns, so <code>sudo pytest</code> can’t sneak through on the
+strength of <code>pytest</code>.</p>
+<div class="card">
+  <table>
+    <tr><th>#</th><th>Check</th><th>Example</th><th>Verdict</th></tr>
+    <tr><td>1</td><td>Session override — an earlier “always / never” answer</td>
+        <td>you pressed <code>a</code> for run_python</td><td><span class="pill p-allow">ALLOW</span></td></tr>
+    <tr><td>2</td><td>Tool not listed in the rules at all</td>
+        <td><code>some_new_tool</code></td><td><span class="pill p-ask">ASK</span></td></tr>
+    <tr><td>3</td><td>Simple rule — plain verdict per tool</td>
+        <td><code>read_file</code> (read-only)</td><td><span class="pill p-allow">ALLOW</span></td></tr>
+    <tr><td>4</td><td>Rich rule — deny list first, then allow list, then default</td>
+        <td><code>run_bash("sudo pytest")</code></td><td><span class="pill p-deny">DENY</span></td></tr>
+  </table>
+</div>
+
+<div class="thesis">
+  <strong>The thesis, in one loop:</strong> a weak 7-billion-parameter model on a laptop
+  GPU planned multi-step work, recovered from its own errors, and respected human
+  permission gates — not because the model got smarter, but because the scaffolding
+  around it did. <em>Capability lives in the harness.</em>
+</div>
+
+<footer>ankus · from-scratch agent harness · diagram generated in the visual-explainer style</footer>
+</div>
+
+<script type="module">
+  import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+  import elkLayouts from 'https://cdn.jsdelivr.net/npm/@mermaid-js/layout-elk@0.1.7/dist/mermaid-layout-elk.esm.min.mjs';
+  mermaid.registerLayoutLoaders(elkLayouts);
+  mermaid.initialize({ startOnLoad: true });
+</script>
+</body>
+</html>

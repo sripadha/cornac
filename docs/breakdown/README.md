@@ -18,6 +18,12 @@ examples, and real experiment output; the *summary* files are shorter design ref
 | 4 | [permissions-and-hooks-walkthrough.md](permissions-and-hooks-walkthrough.md) | 3 | The ALLOW/DENY/ASK rulebook (priority ladder, deny-beats-allow), the human approver, the hook bus (observer pattern), and how both slot into the loop unchanged |
 | 5 | [ollama-and-environment.md](ollama-and-environment.md) | setup | What Ollama actually is (weights vs engine vs server), why not raw HuggingFace on a 6GB GPU, and `uv` vs `.venv` vs `pip` |
 
+## Visual pages
+
+| File | What it shows |
+|---|---|
+| [ankus-agent-loop.html](ankus-agent-loop.html) | The whole harness on one page: the loop flowchart (with the Week-3 permission gate and hooks), the six layers, a traced request, and the permission priority ladder. Open it in a browser — from WSL: `explorer.exe "$(wslpath -w docs/breakdown/ankus-agent-loop.html)"` (the Mermaid diagram needs internet). |
+
 ## Shorter design summaries
 
 | File | Companion to |
