@@ -548,8 +548,8 @@ tool safely, 3 translated both ways, 4 conducted.
 ## Try it yourself
 
 ```bash
-# Offline (fake brain — proves the loop without any model):
-python examples/walking_skeleton_trace.py   # uses a scripted provider in tests
+# Offline (fake brain — proves the loop's plumbing without any model):
+pytest tests/test_walking_skeleton.py -q    # scripted provider drives the loop
 
 # Live, local model:
 ollama pull qwen2.5:7b-instruct-q4_K_M
