@@ -1,0 +1,6 @@
+Memory experiments (run 21)
+
+Baseline: the 1.3B model at batch 8 peaks at 21.4 GB and does not fit the 24 GB card with a longer context.
+Enabling gradient checkpointing on every transformer block cut memory by 37% at the cost of a 19% slowdown per step.
+That is enough headroom to double the batch size, which more than pays for the recompute.
+Next: try checkpointing every second block instead of every block to claw back some of the step time.

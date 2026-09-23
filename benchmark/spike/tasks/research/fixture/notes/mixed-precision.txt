@@ -1,0 +1,6 @@
+Mixed precision (run 9)
+
+Moved the forward and backward pass to bf16 with fp32 master weights.
+Peak memory dropped by 28% and step time by about a third. Loss curves
+overlap the fp32 run for the first 20k steps; no divergence seen.
+Keep the optimizer state in fp32 - the fp16 attempt from run 7 diverged.

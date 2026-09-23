@@ -1,0 +1,6 @@
+Attention kernel notes (run 14)
+
+Swapped the naive attention for the fused kernel on the 1.3B model.
+Throughput went from 1.9k to 4.0k tokens/s, roughly a 2.1x speedup at
+sequence length 4096. No change to peak memory worth reporting; the win
+here is compute, not memory. Numerics matched the reference to 1e-3.

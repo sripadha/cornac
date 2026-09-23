@@ -64,7 +64,9 @@ def test_request_carries_num_ctx_seed_and_temperature():
     body = sent["body"]
     assert body["model"] == "m"
     assert body["stream"] is False
-    assert body["options"] == {"temperature": 0.3, "num_ctx": 4096, "seed": 7}
+    assert body["options"] == {"temperature": 0.3, "num_ctx": 4096, "seed": 7,
+                               "num_predict": 2048, "presence_penalty": 0.0}
+    assert "think" not in body  # "m" is not a Qwen 3 family tag: the key is left out
 
 
 def test_defaults_are_a_generous_context_and_a_pinned_seed():
@@ -78,7 +80,47 @@ def test_defaults_are_a_generous_context_and_a_pinned_seed():
 
     # 2048 (Ollama's default) silently truncates an agent conversation; 8192 does not.
     # temperature 0 alone is not determinism, hence the seed.
-    assert sent["options"] == {"temperature": 0.0, "num_ctx": 8192, "seed": 42}
+    assert sent["options"] == {"temperature": 0.0, "num_ctx": 8192, "seed": 42,
+                               "num_predict": 2048, "presence_penalty": 0.0}
+    # The frozen benchmark model is a Qwen 3.5 tag, so thinking is switched off.
+    assert sent["model"] == "qwen3.5:4b"
+    assert sent["think"] is False
+
+
+def test_frozen_model_sends_presence_penalty_zero_and_think_off():
+    # The freeze's precondition: the library tag bakes presence_penalty 1.5 into its
+    # Modelfile; cornac must override it on every request or the model goes 7/9 again.
+    sent: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        sent.update(json.loads(request.content))
+        return httpx.Response(200, json=ollama_reply())
+
+    one_turn(make_provider(handler, model="qwen3.5:4b"))
+    assert sent["options"]["presence_penalty"] == 0.0
+    assert sent["think"] is False
+
+
+def test_think_is_automatic_per_model_family_and_can_be_forced():
+    assert OllamaProvider(model="qwen3:8b").think_flag() is False
+    assert OllamaProvider(model="hf.co/unsloth/Qwen3.5-4B-GGUF:Q8_0").think_flag() is False
+    assert OllamaProvider(model="qwen2.5:7b-instruct-q4_K_M").think_flag() is None
+    assert OllamaProvider(model="qwen3.5:4b", think=True).think_flag() is True
+    assert OllamaProvider(model="llama3", think=False).think_flag() is False
+
+
+def test_extra_options_are_merged_last_and_reported():
+    sent: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        sent.update(json.loads(request.content))
+        return httpx.Response(200, json=ollama_reply())
+
+    provider = make_provider(handler, extra_options={"top_k": 0, "presence_penalty": 1.5})
+    one_turn(provider)
+    assert sent["options"]["top_k"] == 0
+    assert sent["options"]["presence_penalty"] == 1.5      # the override wins
+    assert sent["options"] == provider.request_options()   # what we log is what we sent
 
 
 def test_a_full_conversation_is_sent_in_ollama_wire_shape():

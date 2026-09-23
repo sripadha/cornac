@@ -1,0 +1,42 @@
+{
+  "hf.co/unsloth/Qwen3.5-4B-GGUF:Q8_0": {
+    "pull_size": "5.2 GB",
+    "tool_capable": true,
+    "probe_reply": "The current time in Tokyo is 2:04 PM on Tuesday, September 22, 2026 (JST).",
+    "probe_error": null,
+    "probe_transcript": "transcripts/hf.co_unsloth_Qwen3.5-4B-GGUF_Q8_0__probe.json",
+    "placement": "45%/55% CPU/GPU"
+  },
+  "hf.co/unsloth/Qwen2.5-Coder-7B-Instruct-GGUF:Q4_K_M": {
+    "pull_size": "4.7 GB",
+    "tool_capable": false,
+    "probe_reply": "<xml>\n  {\"name\": \"get_current_time\", \"arguments\": {\"timezone\": \"Asia/Tokyo\"}}\n</xml>",
+    "probe_error": null,
+    "probe_transcript": "transcripts/hf.co_unsloth_Qwen2.5-Coder-7B-Instruct-GGUF_Q4_K_M__probe.json",
+    "placement": "21%/79% CPU/GPU"
+  },
+  "qwen3:4b-instruct-2507-q4_K_M": {
+    "pull_size": "2.5 GB",
+    "tool_capable": true,
+    "probe_reply": "The current time in Tokyo is 2026-09-22 14:20:51 JST.",
+    "probe_error": null,
+    "probe_transcript": "transcripts/qwen3_4b-instruct-2507-q4_K_M__probe.json",
+    "placement": "100% GPU"
+  },
+  "qwen3.5:4b": {
+    "pull_size": "3.4 GB",
+    "tool_capable": true,
+    "probe_reply": "The current time in Tokyo is **14:26:44** on September 22, 2026 (JST).",
+    "probe_error": null,
+    "probe_transcript": "transcripts/qwen3.5_4b__probe.json",
+    "placement": "100% GPU"
+  },
+  "qwen3:8b": {
+    "pull_size": "5.2 GB",
+    "tool_capable": true,
+    "probe_reply": "The current time in Tokyo is 14:31:10 JST on September 22, 2026.",
+    "probe_error": null,
+    "probe_transcript": "transcripts/qwen3_8b__probe.json",
+    "placement": "36%/64% CPU/GPU"
+  }
+}

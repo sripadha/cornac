@@ -36,7 +36,11 @@ import httpx
 from cornac.core.messages import Message, ToolCall, Usage
 from cornac.providers.base import Provider
 
-DEFAULT_MODEL = "qwen2.5:7b-instruct-q4_K_M"
+# The benchmark model, FROZEN on 2026-09-22 after a three-round spike (benchmark/spike/):
+# on three coding tasks x 3 runs, qwen3.5:4b went 9/9 at ~20 s/run entirely on a 6 GB GPU
+# once presence_penalty was forced to 0 (see below) — matching the Unsloth Q6_K/Q8_0
+# builds of the same weights at 2.5-5x their speed. Change this only with new evidence.
+DEFAULT_MODEL = "qwen3.5:4b"
 DEFAULT_HOST = "http://localhost:11434"
 
 
@@ -51,6 +55,10 @@ class OllamaProvider(Provider):
         temperature: float = 0.0,
         max_retries: int = 3,
         backoff: float = 0.5,
+        num_predict: int = 2048,
+        presence_penalty: float = 0.0,
+        think: bool | None = None,
+        extra_options: dict | None = None,
     ):
         """Configure a connection to a local Ollama daemon.
 
@@ -79,6 +87,23 @@ class OllamaProvider(Provider):
                 a value means the same thing on both providers. 0 makes exactly
                 one attempt; the default 3 allows up to four.
             backoff: seconds to wait before the first retry; doubles each time.
+            num_predict: the per-reply output cap, in tokens. A model that leaks its
+                chain of thought or loops can otherwise generate until the context is
+                full; 2048 is far above any real tool call or answer.
+            presence_penalty: sent explicitly because the library tag for qwen3.5:4b
+                BAKES IN presence_penalty 1.5 in its Modelfile, and that setting made the
+                model unable to re-emit text it had just read — exactly what rewriting a
+                file with write_file is. With 1.5 it dropped the untouched functions and
+                went 7/9 on the coding spike; with 0 it went 9/9. Request options
+                override the Modelfile, so cornac sets 0 on every request.
+            think: whether to ask the daemon for "thinking" (chain of thought). None
+                means automatic: off for any Qwen 3 family tag (qwen3, qwen3.5, the
+                Unsloth GGUFs), and the key is not sent at all for other models, whose
+                templates may reject it. Thinking is off for the benchmark so that runs
+                are comparable and the thinking text cannot leak into answers.
+            extra_options: any further Ollama options, merged LAST so they can override
+                the ones above (e.g. {"top_k": 0}). request_options() returns the merged
+                dict — the benchmark records it on every run.
         """
         self.model = model
         self.host = host.rstrip("/")
@@ -87,6 +112,10 @@ class OllamaProvider(Provider):
         self.temperature = temperature
         self.max_retries = max_retries
         self.backoff = backoff
+        self.num_predict = num_predict
+        self.presence_penalty = presence_penalty
+        self.think = think
+        self.extra_options = dict(extra_options or {})
         self._client = httpx.Client(timeout=timeout)
         # Kept as an attribute so tests can swap it for a no-op and not actually wait.
         self._sleep = time.sleep
@@ -95,18 +124,44 @@ class OllamaProvider(Provider):
     def name(self) -> str:
         return f"ollama:{self.model}"
 
+    def request_options(self) -> dict:
+        """The exact "options" dict sent with every request — see __init__ for each one.
+
+        extra_options is merged last so a caller can override any default. The benchmark
+        logs this dict per run: a result nobody can reproduce is not a result.
+        """
+        options = {
+            "temperature": self.temperature,
+            "num_ctx": self.num_ctx,
+            "seed": self.seed,
+            "num_predict": self.num_predict,
+            "presence_penalty": self.presence_penalty,
+        }
+        options.update(self.extra_options)
+        return options
+
+    def think_flag(self) -> bool | None:
+        """What to send as the top-level "think" field, or None to leave it out.
+
+        Automatic mode turns thinking OFF for the Qwen 3 family (tag contains "qwen3":
+        qwen3, qwen3.5, and the hf.co/unsloth GGUFs of them). Other models don't get
+        the key at all — a template that has no thinking mode may reject it.
+        """
+        if self.think is not None:
+            return self.think
+        return False if "qwen3" in self.model.lower() else None
+
     def complete(self, messages: list[Message], tools: list[dict]) -> Message:
         payload: dict = {
             "model": self.model,
             "messages": self._to_ollama(messages),
             "stream": False,
             # Per-request generation settings — see __init__ for why each one matters.
-            "options": {
-                "temperature": self.temperature,
-                "num_ctx": self.num_ctx,
-                "seed": self.seed,
-            },
+            "options": self.request_options(),
         }
+        think = self.think_flag()
+        if think is not None:
+            payload["think"] = think
         if tools:
             payload["tools"] = [
                 {

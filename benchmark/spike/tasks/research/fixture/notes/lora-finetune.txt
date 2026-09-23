@@ -1,0 +1,7 @@
+LoRA fine-tune (run 12)
+
+Rank-8 adapters on the attention projections only: 0.4% of the parameters
+are trainable. Quality on the held-out set is within 1.1 points of full
+fine-tuning, and the adapter file is 14 MB instead of 2.6 GB.
+Memory is dominated by activations here, not weights, so LoRA alone does
+not help the batch-size problem. See the memory experiments note for that.

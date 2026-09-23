@@ -1,0 +1,14 @@
+{
+  "qwen2.5:7b-instruct-q4_K_M": {
+    "pull_size": "4.7 GB",
+    "placement": "21%/79% CPU/GPU"
+  },
+  "qwen3:8b": {
+    "pull_size": "5.2 GB",
+    "placement": "36%/64% CPU/GPU"
+  },
+  "qwen3:4b": {
+    "pull_size": "2.5 GB",
+    "placement": "100% GPU"
+  }
+}

@@ -1,0 +1,6 @@
+Data loading (run 17)
+
+The input pipeline was the bottleneck at 4 workers; 12 workers keeps the
+GPU busy. Saving a full checkpoint every 500 steps costs about 40 seconds
+each time, so we now save every 2000 steps and keep the last three.
+Resuming from a checkpoint is exact: the loss matches to the 4th decimal.

@@ -1,0 +1,19 @@
+[
+  {
+    "role": "system",
+    "text": "You are a helpful assistant with tools. Call a tool when it helps."
+  },
+  {
+    "role": "user",
+    "text": "What is the current time in Tokyo? Use the tool."
+  },
+  {
+    "role": "assistant",
+    "text": "<xml>\n  {\"name\": \"get_current_time\", \"arguments\": {\"timezone\": \"Asia/Tokyo\"}}\n</xml>",
+    "stop_reason": "stop",
+    "usage": {
+      "input_tokens": 178,
+      "output_tokens": 28
+    }
+  }
+]

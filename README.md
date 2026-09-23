@@ -39,7 +39,7 @@ they *direct* a much larger force. That's exactly what a harness does to an LLM.
 Same agent, same tool, two brains:
 
 ```bash
-# Local Qwen 2.5 7B via Ollama
+# Local Qwen 3.5 4B via Ollama (the frozen benchmark model)
 python examples/walking_skeleton.py ollama
 
 # Claude Haiku via the Anthropic API
@@ -88,7 +88,8 @@ uv pip install -e ".[dev]"
 
 # For the local provider:
 curl -fsSL https://ollama.com/install.sh | sh
-ollama pull qwen2.5:7b-instruct-q4_K_M
+ollama pull qwen3.5:4b     # the frozen benchmark model: 9/9 on the coding spike,
+                          # ~20 s per task, fits a 6 GB GPU (see benchmark/spike/)
 
 # For the Claude provider:
 export ANTHROPIC_API_KEY=sk-ant-...

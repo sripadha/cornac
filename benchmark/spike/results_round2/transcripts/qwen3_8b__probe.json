@@ -1,0 +1,42 @@
+[
+  {
+    "role": "system",
+    "text": "You are a helpful assistant with tools. Call a tool when it helps."
+  },
+  {
+    "role": "user",
+    "text": "What is the current time in Tokyo? Use the tool."
+  },
+  {
+    "role": "assistant",
+    "text": "",
+    "tool_calls": [
+      {
+        "name": "get_current_time",
+        "arguments": {
+          "timezone": "Asia/Tokyo"
+        }
+      }
+    ],
+    "stop_reason": "stop",
+    "usage": {
+      "input_tokens": 186,
+      "output_tokens": 24
+    }
+  },
+  {
+    "role": "tool",
+    "text": "2026-09-22 14:31:10 JST",
+    "name": "get_current_time",
+    "is_error": false
+  },
+  {
+    "role": "assistant",
+    "text": "The current time in Tokyo is 14:31:10 JST on September 22, 2026.",
+    "stop_reason": "stop",
+    "usage": {
+      "input_tokens": 243,
+      "output_tokens": 30
+    }
+  }
+]
