@@ -48,9 +48,14 @@ def main() -> None:
     print(f"\n[provider] {provider.name}")
     print(f"[user]     {question}\n")
 
-    answer = agent.run(question)
+    result = agent.run(question)
 
-    print(f"[agent]    {answer}\n")
+    # run() hands back a RunResult, not a string. The answer is result.text; the run's
+    # cost (model calls, seconds, tokens) and why it stopped ride along with it.
+    print(f"[agent]    {result.text}\n")
+    print(f"[run]      stop_reason={result.stop_reason} steps={result.steps} "
+          f"duration={result.duration:.1f}s tokens={result.usage.total_tokens} "
+          f"(in {result.usage.input_tokens} / out {result.usage.output_tokens})")
     print(f"[debug]    conversation had {len(agent.messages)} messages "
           f"(system + user + assistant turns + tool results)")
 

@@ -85,6 +85,19 @@ def test_grep_no_match(ws):
     assert "no matches" in out
 
 
+def test_grep_path_may_be_a_single_file(ws):
+    # Regression: rglob("*") on a FILE yields nothing, so this used to say "no matches"
+    # for a file that plainly contained the pattern — a false answer the model trusted.
+    out = Grep(ws).run({"pattern": r"return a \+ b", "path": "sub/code.py"})
+    assert "sub/code.py:2:" in out
+
+
+def test_grep_missing_path_is_an_error_not_no_matches(ws):
+    out = Grep(ws).run({"pattern": "def", "path": "does/not/exist.py"})
+    assert out.startswith("Error: no such file or directory")
+    assert "no matches" not in out
+
+
 # --- shell ---------------------------------------------------------------------
 
 def test_run_bash_echo(ws):

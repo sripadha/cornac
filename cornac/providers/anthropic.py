@@ -7,13 +7,17 @@ are handled here so the rest of cornac never has to know about them:
   1. The system prompt is a separate top-level parameter, not a message in the list.
   2. Tool results must be delivered inside a *user* message as `tool_result` content
      blocks — so our neutral role="tool" messages get folded into user turns here.
+
+Week 4 adds the two bits of metadata the benchmark needs — token usage and the stop
+reason — which the API hands back on every response, and turns on the SDK's own
+retry logic so a flaky connection does not sink a long benchmark run.
 """
 
 from __future__ import annotations
 
 import os
 
-from cornac.core.messages import Message, ToolCall
+from cornac.core.messages import Message, ToolCall, Usage
 from cornac.providers.base import Provider
 
 DEFAULT_MODEL = "claude-haiku-4-5-20251001"
@@ -26,7 +30,15 @@ class AnthropicProvider(Provider):
 
         self.model = model
         self.max_tokens = max_tokens
-        self._client = anthropic.Anthropic(api_key=api_key or os.environ.get("ANTHROPIC_API_KEY"))
+        # Unlike the Ollama provider, we don't write a retry loop here: the Anthropic
+        # SDK has one built in. With max_retries=3 it re-sends on connection errors,
+        # 429 rate limits and 5xx server errors, with exponential backoff between
+        # attempts, and gives up after the third retry. Constructing the client does
+        # not open a connection — nothing touches the network until complete() runs.
+        self._client = anthropic.Anthropic(
+            api_key=api_key or os.environ.get("ANTHROPIC_API_KEY"),
+            max_retries=3,
+        )
 
     @property
     def name(self) -> str:
@@ -71,7 +83,9 @@ class AnthropicProvider(Provider):
 
             elif msg.role == "assistant":
                 content: list[dict] = []
-                if msg.text:
+                # The API rejects a text block that is empty or whitespace-only, so
+                # only real text becomes a block.
+                if msg.text and msg.text.strip():
                     content.append({"type": "text", "text": msg.text})
                 for call in msg.tool_calls:
                     content.append(
@@ -82,7 +96,15 @@ class AnthropicProvider(Provider):
                             "input": call.arguments,
                         }
                     )
-                api_messages.append({"role": "assistant", "content": content})
+                # The API also rejects an assistant message with no content at all
+                # ({"role": "assistant", "content": []}). That shape is reachable: a
+                # reply of "" or one whose only blocks were of a kind _from_anthropic
+                # ignores. It bites on the NEXT complete() — when the whole history
+                # is re-sent — so an Agent reused for a second run() would fail. An
+                # empty turn carries no information, so it is simply left out.
+                # (Consecutive same-role turns are fine: the API merges them.)
+                if content:
+                    api_messages.append({"role": "assistant", "content": content})
 
             elif msg.role == "tool":
                 # Anthropic wants tool results inside a user message. Merge into the
@@ -119,4 +141,23 @@ class AnthropicProvider(Provider):
             elif block.type == "tool_use":
                 tool_calls.append(ToolCall(id=block.id, name=block.name, arguments=dict(block.input)))
 
-        return Message(role="assistant", text="".join(text_parts), tool_calls=tool_calls)
+        # A real API response always carries `usage`, but a hand-built one in a test
+        # (or a future response type) may not — so read it defensively, and leave
+        # Message.usage as None when there is genuinely nothing to report.
+        usage = None
+        api_usage = getattr(response, "usage", None)
+        if api_usage is not None:
+            usage = Usage(
+                input_tokens=getattr(api_usage, "input_tokens", 0) or 0,
+                output_tokens=getattr(api_usage, "output_tokens", 0) or 0,
+            )
+
+        return Message(
+            role="assistant",
+            text="".join(text_parts),
+            tool_calls=tool_calls,
+            usage=usage,
+            # Anthropic's own word for why it stopped: "end_turn", "tool_use", or
+            # "max_tokens" (cut off — worth knowing when a run looks truncated).
+            stop_reason=getattr(response, "stop_reason", None),
+        )

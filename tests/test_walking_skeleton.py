@@ -3,7 +3,8 @@
 These use a fake provider so the whole loop — tool dispatch, result feedback, the
 neutral message round-trip — is exercised with no network, no API key, and no Ollama.
 A real LLM is non-deterministic; the loop's plumbing should be deterministic and is
-what we pin down here.
+what we pin down here. (Since Week 4, run() returns a RunResult; the final text is
+`result.text` — see tests/test_run_result.py for the rest of that record.)
 """
 
 from cornac import Agent, Message, ToolRegistry
@@ -41,9 +42,10 @@ def test_loop_executes_tool_then_returns_final_text():
     )
     agent = Agent(provider=provider, registry=ToolRegistry([get_current_time]))
 
-    answer = agent.run("What time is it?")
+    result = agent.run("What time is it?")
 
-    assert answer == "It is currently the time I just looked up."
+    assert result.text == "It is currently the time I just looked up."
+    assert result.stop_reason == "done"
     # system?(none) + user + assistant(toolcall) + tool result + assistant(final) = 4
     roles = [m.role for m in agent.messages]
     assert roles == ["user", "assistant", "tool", "assistant"]
@@ -62,9 +64,9 @@ def test_unknown_tool_comes_back_as_error_not_crash():
     )
     agent = Agent(provider=provider, registry=ToolRegistry([get_current_time]))
 
-    answer = agent.run("do something")
+    result = agent.run("do something")
 
-    assert answer == "ok, recovered"
+    assert result.text == "ok, recovered"
     tool_msg = agent.messages[2]
     assert tool_msg.is_error
     assert "Unknown tool" in tool_msg.text

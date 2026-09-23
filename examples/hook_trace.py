@@ -5,6 +5,10 @@ the agent loop to print what was happening. Here we register hook callbacks and 
 call the real agent.run() — the loop lives in cornac, we just watch it. That's the
 whole point of the hook system.
 
+Since Week 4, hooks can do one thing beyond watching: a pre_tool_use callback that
+returns Decision.DENY vetoes the call before the policy or the human is consulted.
+The pre_tool_use hook below only narrates, but the comment shows where a veto goes.
+
     python examples/hook_trace.py ollama
     python examples/hook_trace.py anthropic   # needs ANTHROPIC_API_KEY
 """
@@ -40,17 +44,27 @@ def install_trace_hooks(bus: HookBus) -> None:
             print(f"[assistant] {m.text!r}")
     bus.on("on_assistant_message", on_assistant)
 
+    # Fires before the policy looks at the call. We just narrate and return None; if
+    # this returned Decision.DENY instead — or crashed — the agent would refuse the
+    # call right here.
+    bus.on("pre_tool_use", lambda call: print(f"   ↳ about to run {call.name}"))
+
     bus.on("on_permission_decision",
            lambda call, decision: print(f"   ↳ policy says {decision.value.upper()} for {call.name}"))
 
     def on_post_tool(call, result):
-        body = result.text.replace("\n", " ⏎ ")
+        # `result` is a ToolResult (the tool's raw output), not a Message — so the
+        # body lives in .content, not .text.
+        body = result.content.replace("\n", " ⏎ ")
         body = (body[:120] + "...") if len(body) > 120 else body
         flag = " [ERROR]" if result.is_error else ""
         print(f"   ↳ {call.name} ->{flag} {body!r}")
     bus.on("post_tool_use", on_post_tool)
 
-    bus.on("on_stop", lambda text: print(f"\n[stop] final answer ready"))
+    # on_stop gets the final text — or None if the loop gave up at max_steps.
+    def on_stop(text):
+        print("\n[stop] final answer ready" if text is not None else "\n[stop] hit max_steps")
+    bus.on("on_stop", on_stop)
 
 
 def main() -> None:
@@ -78,8 +92,11 @@ def main() -> None:
     )
 
     print(f"=== hook_trace | provider: {agent.provider.name} | workspace: {tmp} ===")
-    answer = agent.run("What is the total revenue (units * price) in sales.csv?")
-    print(f"\n=== FINAL ANSWER ===\n{answer}")
+    result = agent.run("What is the total revenue (units * price) in sales.csv?")
+    print(f"\n=== FINAL ANSWER ===\n{result.text}")
+    print(f"\n[run] stop_reason={result.stop_reason} steps={result.steps} "
+          f"duration={result.duration:.1f}s tokens={result.usage.total_tokens} "
+          f"(in {result.usage.input_tokens} / out {result.usage.output_tokens})")
 
 
 if __name__ == "__main__":

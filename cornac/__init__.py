@@ -15,11 +15,15 @@ Quick start:
         registry=ToolRegistry([get_current_time]),
         system_prompt="You are a helpful assistant.",
     )
-    print(agent.run("What time is it in Tokyo right now?"))
+    result = agent.run("What time is it in Tokyo right now?")
+    print(result.text)            # or just print(result); str() gives the text
+    print(result.stop_reason)     # "done", or "max_steps" if the loop gave up
+    print(result.steps, result.usage.total_tokens)
 """
 
 from cornac.core.agent import Agent
-from cornac.core.messages import Message, ToolCall, ToolResult
+from cornac.core.messages import Message, ToolCall, ToolResult, Usage
+from cornac.core.result import RunResult
 from cornac.hooks.bus import HookBus
 from cornac.permissions.policy import Decision, Policy
 from cornac.permissions.prompt import cli_ask
@@ -33,6 +37,8 @@ __all__ = [
     "Message",
     "ToolCall",
     "ToolResult",
+    "Usage",
+    "RunResult",
     "Tool",
     "tool",
     "ToolRegistry",

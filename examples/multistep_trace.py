@@ -10,6 +10,14 @@ climb past 2.
 
     python examples/multistep_trace.py ollama
     python examples/multistep_trace.py anthropic   # needs ANTHROPIC_API_KEY
+
+NOTE: this script deliberately UNROLLS the agent loop — it calls provider.complete()
+and registry.execute() itself instead of agent.run() — so it can print between steps.
+The price is fidelity: the copied loop BYPASSES the permission policy and the hook
+bus that the real Agent.run() puts in front of every tool call (Week 3), and it gets
+no RunResult with steps/tokens/duration (Week 4). That's fine for watching tools
+chain, but it is not the real loop. To observe the real loop without copying it, see
+examples/hook_trace.py — that is the hook-based way.
 """
 
 import sys

@@ -3,9 +3,13 @@
 # Load it with:  Policy.from_yaml("examples/cornac.policy.yaml")
 #
 # Each tool maps to either a plain decision ("allow" / "deny" / "ask"), or — for
-# command-bearing tools like run_bash — a dict with deny/allow substring lists plus a
-# default. deny is checked first (it wins), then allow; if neither matches, the default
-# applies. Any tool not listed falls back to the top-level `default`.
+# command-bearing tools like run_bash — a dict with deny/allow pattern lists plus a
+# default. deny is a substring match over every argument and is checked first (it
+# wins, even after an "always" answer at the prompt). allow is a prefix match on the
+# one argument the tool executes (run_bash's "command"), skipped if the command has
+# any shell metacharacter. If neither matches, the default applies. Any tool not
+# listed falls back to the top-level `default`. A malformed rule — or an allow
+# pattern that could never match — is rejected when the policy is loaded.
 
 default: ask          # anything not listed below -> ask the human
 

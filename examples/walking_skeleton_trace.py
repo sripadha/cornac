@@ -11,9 +11,14 @@ frame-by-frame trace (Frames 0-8).
     python examples/walking_skeleton_trace.py anthropic
 
 How it works: instead of calling agent.run() (which hides the loop), we run the
-loop ourselves here and print after each step. This is exactly the loop from
-cornac/core/agent.py — copied out so we can narrate it. In Week 3 we'll add a
-real "hook" system so we can observe the loop WITHOUT copying it.
+loop ourselves here and print after each step. This is the Week-1 loop from
+cornac/core/agent.py — copied out so we can narrate it.
+
+NOTE: because the loop is copied, not called, it BYPASSES everything the real
+Agent.run() has grown since: the permission policy and the hook bus that gate every
+tool call (Week 3), and the RunResult with steps/tokens/duration (Week 4). That is
+deliberate — this file teaches the bare loop and nothing else. To observe the real
+loop WITHOUT copying it, see examples/hook_trace.py — that is the hook-based way.
 """
 
 import sys

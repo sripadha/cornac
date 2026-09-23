@@ -64,8 +64,12 @@ def main() -> None:
 
     print(f"=== permissions_demo | provider: {agent.provider.name} ===")
     print(f"workspace: {tmp}\n")
-    answer = agent.run("What is the total revenue (units * price) in sales.csv?")
-    print(f"\n=== FINAL ANSWER ===\n{answer}")
+    result = agent.run("What is the total revenue (units * price) in sales.csv?")
+    # result.text is None if the model never produced a final answer (max_steps hit).
+    print(f"\n=== FINAL ANSWER ===\n{result.text}")
+    print(f"\n[run] stop_reason={result.stop_reason} steps={result.steps} "
+          f"duration={result.duration:.1f}s tokens={result.usage.total_tokens} "
+          f"(in {result.usage.input_tokens} / out {result.usage.output_tokens})")
 
 
 if __name__ == "__main__":

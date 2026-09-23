@@ -95,15 +95,16 @@ class ListDir(Tool):
 class Grep(Tool):
     name = "grep"
     description = (
-        "Search for a regular-expression pattern across text files in the workspace "
-        "(recursively from the given directory). Returns matching lines as "
+        "Search for a regular-expression pattern in the workspace. `path` may be a "
+        "directory (searched recursively) or a single file. Returns matching lines as "
         "path:line_number:line. Use this to find where something is defined or used."
     )
     input_schema = {
         "type": "object",
         "properties": {
             "pattern": {"type": "string", "description": "a Python regular expression"},
-            "path": {"type": "string", "description": "directory to search from; defaults to '.'"},
+            "path": {"type": "string",
+                     "description": "a directory to search recursively, or one file; defaults to '.'"},
         },
         "required": ["pattern"],
     }
@@ -114,8 +115,22 @@ class Grep(Tool):
     def run(self, arguments: dict) -> str:
         root = self.ws.resolve(arguments.get("path", "."))  # raises if outside sandbox
         regex = re.compile(arguments["pattern"])
+
+        # What to search depends on what `path` is. The first version always did
+        # root.rglob("*") — "everything inside this directory" — which is right for a
+        # directory but yields NOTHING for a file, so grep(pattern, path="calc.py")
+        # answered "(no matches)" even when calc.py contained the pattern. A wrong
+        # "no matches" is worse than an error: the model believes it and reasons from
+        # a false fact. (Found in the model spike: qwen3:8b hit it six times.)
+        if root.is_file():
+            files = [root]
+        elif root.is_dir():
+            files = sorted(root.rglob("*"))
+        else:
+            return f"Error: no such file or directory: {self.ws.relative(root)}"
+
         hits: list[str] = []
-        for file in sorted(root.rglob("*")):
+        for file in files:
             if not file.is_file():
                 continue
             try:

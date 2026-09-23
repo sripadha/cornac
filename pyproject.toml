@@ -29,3 +29,8 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["cornac"]
+
+[tool.pytest.ini_options]
+# Only tests/ holds our tests. benchmark/ contains task FIXTURES — deliberately broken
+# code the agent is supposed to fix — and those must never be collected as tests.
+testpaths = ["tests"]

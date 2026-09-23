@@ -5,7 +5,9 @@ most powerful — and most dangerous — built-in: a command can do anything the
 Two structural guards live here:
 
   - cwd is pinned to the workspace root (commands start inside the sandbox)
-  - a timeout prevents a hung command from freezing the agent
+  - a timeout prevents a hung command from freezing the agent — and kills the whole
+    process group, not just the shell, so "timed out" means "stopped" (see
+    cornac/tools/_subprocess.py for why that distinction matters)
 
 The *real* safety gate for run_bash is the Week 3 permission system (this tool will
 default to "ask"). Until then, treat it as trusted-local-use only. We deliberately do
@@ -17,11 +19,18 @@ from __future__ import annotations
 
 import subprocess
 
+from cornac.tools._subprocess import partial_output, run_with_timeout
+from cornac.tools._truncate import truncate_head_tail
 from cornac.tools.base import Tool
 from cornac.tools.workspace import Workspace
 
 DEFAULT_TIMEOUT = 30  # seconds
-MAX_OUTPUT = 50_000   # chars of combined stdout+stderr to return
+
+# Long output is cut to head+tail rather than just head: tracebacks and test summaries
+# live at the END of a command's output, and the model needs to see them. See
+# cornac/tools/_truncate.py for the reasoning.
+HEAD_CHARS = 40_000   # chars kept from the start of combined stdout+stderr
+TAIL_CHARS = 10_000   # chars kept from the end
 
 
 class RunBash(Tool):
@@ -36,25 +45,30 @@ class RunBash(Tool):
         "required": ["command"],
     }
 
-    def __init__(self, workspace: Workspace, timeout: int = DEFAULT_TIMEOUT):
+    def __init__(self, workspace: Workspace, timeout: float = DEFAULT_TIMEOUT):
         self.ws = workspace
         self.timeout = timeout
 
     def run(self, arguments: dict) -> str:
         command = arguments["command"]
         try:
-            proc = subprocess.run(
+            proc = run_with_timeout(
                 command,
                 shell=True,
                 cwd=self.ws.root,           # pin to the sandbox directory
-                capture_output=True,
-                text=True,
                 timeout=self.timeout,
             )
-        except subprocess.TimeoutExpired:
-            return f"Error: command timed out after {self.timeout}s"
+        except subprocess.TimeoutExpired as exc:
+            # What the command printed before it hung is often the whole diagnosis
+            # (the test that stalled, the prompt it was waiting on), so it is shown
+            # too — head+tail-trimmed like any other output.
+            message = f"Error: command timed out after {self.timeout}s"
+            out, err = partial_output(exc)
+            partial = truncate_head_tail(out + err, HEAD_CHARS, TAIL_CHARS).rstrip()
+            if partial:
+                message += f"\n--- partial output ---\n{partial}"
+            return message
 
         out = (proc.stdout or "") + (proc.stderr or "")
-        if len(out) > MAX_OUTPUT:
-            out = out[:MAX_OUTPUT] + "\n... [output truncated]"
+        out = truncate_head_tail(out, HEAD_CHARS, TAIL_CHARS)
         return f"(exit code {proc.returncode})\n{out}".rstrip()

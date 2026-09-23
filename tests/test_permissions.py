@@ -5,6 +5,8 @@ for the human at the terminal, and we assert on what ran, what was refused, and 
 hook events fired.
 """
 
+import pytest
+
 from cornac import Agent, Message, ToolRegistry
 from cornac.core.messages import ToolCall
 from cornac.hooks.bus import HookBus
@@ -13,10 +15,19 @@ from cornac.providers.base import Provider
 from cornac.tools.base import tool
 
 
+# A side-effect flag: the only trustworthy proof that a tool did or did not run.
+ran: list[str] = []
+
+
 @tool()
 def echo(text: str = "hi") -> str:
     """Echo the given text back."""
+    ran.append(text)
     return f"echoed: {text}"
+
+
+def setup_function():
+    ran.clear()
 
 
 class ScriptedProvider(Provider):
@@ -65,8 +76,8 @@ def test_denied_tool_does_not_run_and_returns_error():
         Message(role="assistant", text="done"),
     ]
     agent = _agent(script, policy=Policy({"tools": {"echo": "deny"}}))
-    answer = agent.run("go")
-    assert answer == "done"
+    result = agent.run("go")
+    assert result.text == "done"
     tool_msg = next(m for m in agent.messages if m.role == "tool")
     assert tool_msg.is_error
     assert "Permission denied" in tool_msg.text
@@ -113,6 +124,75 @@ def test_ask_routes_to_approver_which_can_allow():
     assert tool_msg.text == "echoed: ok"  # and it allowed the run
 
 
+# --- The permission gate fails closed ------------------------------------------
+#
+# The tool runs on an explicit ALLOW and on nothing else. An approver (or a policy)
+# that answers anything else — None from a forgotten return statement, a leftover
+# ASK, a truthy "yes" — has a bug, and a bug in a gate must refuse, never run. The
+# first version checked `== DENY` and ran the tool on every other value.
+
+@pytest.mark.parametrize("answer", [None, "yes", Decision.ASK, True, object()])
+def test_approver_returning_anything_but_allow_is_a_denial(answer):
+    decisions = []
+    bus = HookBus()
+    bus.on("on_permission_decision", lambda call, d: decisions.append(d))
+
+    script = [
+        Message(role="assistant", tool_calls=[ToolCall("c1", "echo", {"text": "hi"})]),
+        Message(role="assistant", text="done"),
+    ]
+    agent = _agent(script, policy=Policy({"tools": {"echo": "ask"}}),
+                   approver=lambda call, policy=None: answer, hooks=bus)
+    result = agent.run("go")
+
+    assert ran == []                                # the tool did NOT execute
+    tool_msg = next(m for m in agent.messages if m.role == "tool")
+    assert tool_msg.is_error
+    assert "Permission denied" in tool_msg.text
+    assert decisions == [Decision.DENY]             # observers see the effective decision
+    assert result.text == "done"                    # the model saw the error and carried on
+
+
+@pytest.mark.parametrize("answer", [None, "yes", True, object()])
+def test_policy_returning_anything_but_a_decision_is_a_denial(answer):
+    # Same rule, one gate earlier: a policy that answers with a non-Decision. It is
+    # not ASK, so the approver must not be consulted either — even one that would
+    # have said ALLOW.
+    class OddPolicy(Policy):
+        def check(self, call):
+            return answer
+
+    approver_calls = []
+
+    def approver(call, policy=None):
+        approver_calls.append(call.name)
+        return Decision.ALLOW
+
+    script = [
+        Message(role="assistant", tool_calls=[ToolCall("c1", "echo", {"text": "hi"})]),
+        Message(role="assistant", text="done"),
+    ]
+    agent = _agent(script, policy=OddPolicy({}), approver=approver)
+    agent.run("go")
+
+    assert ran == []
+    assert approver_calls == []
+    tool_msg = next(m for m in agent.messages if m.role == "tool")
+    assert tool_msg.is_error and "Permission denied" in tool_msg.text
+
+
+def test_an_explicit_allow_from_the_approver_still_runs_the_tool():
+    # The positive side of the same contract, so the gate can't "pass" by refusing everything.
+    script = [
+        Message(role="assistant", tool_calls=[ToolCall("c1", "echo", {"text": "hi"})]),
+        Message(role="assistant", text="done"),
+    ]
+    agent = _agent(script, policy=Policy({"tools": {"echo": "ask"}}),
+                   approver=lambda call, policy=None: Decision.ALLOW)
+    agent.run("go")
+    assert ran == ["hi"]
+
+
 # --- Hooks ---------------------------------------------------------------------
 
 def test_hooks_fire_expected_events():
@@ -129,11 +209,17 @@ def test_hooks_fire_expected_events():
     agent = _agent(script, policy=Policy({"tools": {"echo": "allow"}}), hooks=bus)
     agent.run("go")
 
-    assert events[0] == "on_user_message"
-    assert "pre_tool_use" in events
-    assert "on_permission_decision" in events
-    assert "post_tool_use" in events
-    assert events[-1] == "on_stop"
+    # The exact sequence, not just membership: within one tool call the gate fires
+    # first, then the decision is announced, then the result is reported.
+    assert events == [
+        "on_user_message",
+        "on_assistant_message",       # turn 1: the model asks for a tool
+        "pre_tool_use",
+        "on_permission_decision",
+        "post_tool_use",
+        "on_assistant_message",       # turn 2: the final answer
+        "on_stop",
+    ]
 
 
 def test_misbehaving_hook_does_not_crash_the_agent():
@@ -145,4 +231,10 @@ def test_misbehaving_hook_does_not_crash_the_agent():
         Message(role="assistant", text="survived"),
     ]
     agent = _agent(script, policy=Policy({"tools": {"echo": "allow"}}), hooks=bus)
-    assert agent.run("go") == "survived"  # the broken hook was swallowed
+    # The broken hook is reported on stderr (see test_hooks_hardening.py) but never
+    # raised into the loop, so the run still completes normally...
+    assert agent.run("go").text == "survived"
+    # ...and because pre_tool_use is a gate, its crash counts as a veto: the tool is
+    # refused rather than run on a hook's say-nothing (see test_run_result.py).
+    tool_msg = next(m for m in agent.messages if m.role == "tool")
+    assert tool_msg.is_error and "Vetoed" in tool_msg.text

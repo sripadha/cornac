@@ -5,6 +5,11 @@ These are the *only* shapes the agent loop and tools ever touch. Each provider
 types and its own wire format. Keeping this layer tiny and provider-free is what
 makes cornac genuinely provider-agnostic instead of an Anthropic SDK wrapper with
 an `if provider == "..."` branch bolted on.
+
+Week 4 adds two small pieces of *metadata* to an assistant Message — how many tokens
+the call cost (`usage`) and why the model stopped (`stop_reason`). They live here, in
+neutral form, for the same reason everything else does: the benchmark and the agent
+need to read them without caring which backend produced them.
 """
 
 from __future__ import annotations
@@ -46,6 +51,30 @@ class ToolResult:
 
 
 @dataclass
+class Usage:
+    """Token counts for one model call (or, summed, for a whole run).
+
+    Tokens are the unit of cost and latency in LLM land, so every serious harness
+    reports them. Providers fill this in on the assistant Message they return; the
+    agent adds them up across the run. `a + b` returns a NEW Usage — neither operand
+    is modified, which keeps per-call and per-run totals from leaking into each other.
+    """
+
+    input_tokens: int = 0
+    output_tokens: int = 0
+
+    def __add__(self, other: Usage) -> Usage:
+        return Usage(
+            input_tokens=self.input_tokens + other.input_tokens,
+            output_tokens=self.output_tokens + other.output_tokens,
+        )
+
+    @property
+    def total_tokens(self) -> int:
+        return self.input_tokens + self.output_tokens
+
+
+@dataclass
 class Message:
     """One turn in the conversation, in neutral form.
 
@@ -64,6 +93,16 @@ class Message:
     tool_call_id: str | None = None
     name: str | None = None  # the tool's name; some providers want it echoed back
     is_error: bool = False
+
+    # Only set (by the provider) when role == "assistant". Both are optional so a
+    # hand-built or scripted Message needs neither.
+    usage: Usage | None = None
+    # The backend's own word for why generation ended — Anthropic says "end_turn" /
+    # "tool_use" / "max_tokens"; Ollama's done_reason says "stop" / "length". We keep
+    # it verbatim rather than inventing a neutral enum: it's for humans reading logs
+    # and for the benchmark, and a lossy translation would hide exactly the detail
+    # (e.g. "the model got cut off") you want when debugging.
+    stop_reason: str | None = None
 
     @classmethod
     def user(cls, text: str) -> Message:

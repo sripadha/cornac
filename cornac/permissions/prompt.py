@@ -8,10 +8,13 @@ When the policy can't decide, the agent pauses and asks a human right in the ter
 
   y  -> allow this once
   n  -> deny this once (model gets an error result, can adapt)
-  a  -> allow, and remember: auto-allow this tool for the rest of the session
+  a  -> allow, and remember: don't ask about this tool again this session
   e  -> deny, and remember: auto-deny this tool for the rest of the session
 
 The "always/never" answers call policy.remember(...) so you're not re-asked every time.
+"always" is narrower than it sounds: it only skips the *question*. The policy's deny
+list stays in force — approving `pytest` with "always" does not let `sudo rm -rf /`
+through later. (See the "Session overrides" note in policy.py.)
 
 This is deliberately a small, swappable function. A web UI, a Slack bot, or an automated
 test could provide a different approver with the same signature — the agent only needs
@@ -52,6 +55,8 @@ def cli_ask(call: ToolCall, policy: Policy | None = None) -> Decision:
         if answer in ("a", "always"):
             if policy is not None:
                 policy.remember(call.name, Decision.ALLOW)
+                print(f"  (won't ask about {call.name} again this session; "
+                      "its deny patterns still apply)")
             return Decision.ALLOW
         if answer in ("e", "never"):
             if policy is not None:

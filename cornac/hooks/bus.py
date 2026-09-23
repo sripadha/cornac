@@ -6,7 +6,10 @@ to observe behavior you had to duplicate it. The hook bus fixes that.
 
 A hook is just a function you register against a named lifecycle event. The agent loop
 "fires" events at well-defined points; every registered callback runs. Nothing about the
-loop's logic changes — hooks only observe (and, for some events, can veto; see the agent).
+loop's logic changes — hooks only observe, with one deliberate exception: a
+`pre_tool_use` hook can return Decision.DENY to veto the call (see core/agent.py). To
+make that possible, fire() collects and returns every callback's return value, in
+registration order.
 
     bus = HookBus()
     bus.on("pre_tool_use", lambda call: print("about to run", call.name))
@@ -15,10 +18,29 @@ loop's logic changes — hooks only observe (and, for some events, can veto; see
 Events fired by the agent (see core/agent.py):
     on_user_message(message)
     on_assistant_message(message)
-    pre_tool_use(call)
+    pre_tool_use(call)                    -> return Decision.DENY to veto the call
     on_permission_decision(call, decision)
     post_tool_use(call, result)
-    on_stop(final_text)
+    on_stop(final_text)                   -> final_text is None if max_steps was hit
+
+Two rules govern a callback that raises:
+
+  1. It must never crash the agent. A hook is an observer; its failure is not the
+     agent's failure, so the exception is caught and the loop carries on.
+  2. It must not be *silent* either. Week 3 swallowed hook errors with `pass`, which
+     meant a broken logger simply logged nothing and nobody noticed — a silent
+     observer lies by omission. Now the error is printed to stderr (stderr, so it can
+     never be mistaken for the agent's own output) and the callback's slot in the
+     returned list holds None.
+
+There is one more rule, for the one event whose answers *decide* something. A
+pre_tool_use hook is not only an observer — it can be the rule that stops a call
+("no bash while the tests are red"). If such a hook crashes, "None" is the wrong
+answer: the agent would read it as "no objection" and run the call the hook was
+written to block. A crashed gatekeeper must fail CLOSED. So the agent fires
+pre_tool_use through gate() instead of fire(): identical, except a callback that
+raises contributes HOOK_FAILED — a marker the agent treats as a veto. The error still
+goes to stderr, and the loop still never crashes.
 
 This is the standard publish/subscribe (observer) pattern. It's also the seam that real
 harnesses expose for logging, metrics, tracing, and policy plugins.
@@ -26,8 +48,13 @@ harnesses expose for logging, metrics, tracing, and policy plugins.
 
 from __future__ import annotations
 
+import sys
 from collections import defaultdict
 from typing import Callable
+
+# What a raised callback contributes to a gate() result. Deliberately not None, so a
+# gate can tell "the hook had nothing to say" apart from "the hook broke".
+HOOK_FAILED = object()
 
 
 class HookBus:
@@ -39,17 +66,44 @@ class HookBus:
         """Register `callback` to run whenever `event` fires."""
         self._hooks[event].append(callback)
 
-    def fire(self, event: str, *args, **kwargs) -> None:
-        """Run every callback registered for `event`, in order.
+    def fire(self, event: str, *args, **kwargs) -> list:
+        """Run every callback registered for `event`, in order; return what they returned.
 
-        A misbehaving hook must never break the agent, so we swallow exceptions from
-        callbacks (a hook is an observer; its failure is not the agent's failure).
+        The result has one entry per callback, in registration order. A callback that
+        raised contributes None (and its error goes to stderr). No subscribers -> [].
         """
+        return self._dispatch(event, args, kwargs, failed=None)
+
+    def gate(self, event: str, *args, **kwargs) -> list:
+        """Like fire(), for an event whose return values gate an action (pre_tool_use).
+
+        The one difference: a callback that raised contributes HOOK_FAILED instead of
+        None, so the caller can fail closed. Its error still goes to stderr.
+
+        What counts as a veto is decided by the agent, which looks for Decision.DENY
+        in the list this returns. Decision is a str Enum, so the bare string "deny"
+        compares equal and vetoes as well — accepted on purpose, since it errs on the
+        fail-closed side (see core/agent.py). Nothing else does: "DENY", "no", True
+        and "allow" are all read as "no objection".
+        """
+        return self._dispatch(event, args, kwargs, failed=HOOK_FAILED)
+
+    def _dispatch(self, event: str, args: tuple, kwargs: dict, failed) -> list:
+        """The shared loop behind fire() and gate(); `failed` fills a raised callback's slot."""
+        results: list = []
         for callback in self._hooks.get(event, []):
             try:
-                callback(*args, **kwargs)
-            except Exception:  # noqa: BLE001 — an observer must not crash the subject
-                pass
+                results.append(callback(*args, **kwargs))
+            except Exception as exc:  # noqa: BLE001 — an observer must not crash the subject
+                # __qualname__ names the function, including its enclosing scope
+                # ("MyTracer.on_call"); fall back to repr() for things like partials.
+                who = getattr(callback, "__qualname__", repr(callback))
+                print(
+                    f"[cornac] hook '{event}' callback {who} raised {type(exc).__name__}: {exc}",
+                    file=sys.stderr,
+                )
+                results.append(failed)
+        return results
 
     def __len__(self) -> int:
         return sum(len(cbs) for cbs in self._hooks.values())
