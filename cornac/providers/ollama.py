@@ -108,6 +108,7 @@ class OllamaProvider(Provider):
         self.model = model
         self.host = host.rstrip("/")
         self.num_ctx = num_ctx
+        self.context_window = num_ctx  # what the loop sizes its clearing against (Week 4c)
         self.seed = seed
         self.temperature = temperature
         self.max_retries = max_retries
@@ -119,6 +120,8 @@ class OllamaProvider(Provider):
         self._client = httpx.Client(timeout=timeout)
         # Kept as an attribute so tests can swap it for a no-op and not actually wait.
         self._sleep = time.sleep
+        # How many tool-call ids this provider has made up so far (see _from_ollama).
+        self._synthesized_ids = 0
 
     @property
     def name(self) -> str:
@@ -273,16 +276,27 @@ class OllamaProvider(Provider):
 
     # --- Ollama -> neutral ---------------------------------------------------
 
+    def _next_call_id(self, name: str) -> str:
+        """A tool-call id unique for the life of this provider: call_<n>_<name>."""
+        call_id = f"call_{self._synthesized_ids}_{name or 'tool'}"
+        self._synthesized_ids += 1
+        return call_id
+
     def _from_ollama(self, data: dict) -> Message:
         message = data.get("message", {})
         text = message.get("content", "") or ""
 
         tool_calls: list[ToolCall] = []
-        for i, call in enumerate(message.get("tool_calls", []) or []):
+        for call in message.get("tool_calls", []) or []:
             fn = call.get("function", {})
             # Ollama returns arguments already parsed into a dict (unlike OpenAI's
-            # JSON-string). It usually omits an id, so we synthesize a stable one.
-            call_id = call.get("id") or f"call_{i}_{fn.get('name', 'tool')}"
+            # JSON-string). It usually omits an id, so we synthesize one — numbered
+            # across the whole conversation, not within the response. The first
+            # version restarted at 0 on every reply, so every turn's first call was
+            # `call_0_<name>`, and anything that matched results to calls by id (the
+            # digest, a transcript reader) saw the last turn's outcome on every
+            # earlier call with the same name.
+            call_id = call.get("id") or self._next_call_id(fn.get("name", "tool"))
             tool_calls.append(
                 ToolCall(id=call_id, name=fn.get("name", ""), arguments=dict(fn.get("arguments", {})))
             )

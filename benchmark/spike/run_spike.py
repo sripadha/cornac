@@ -114,6 +114,19 @@ them: same tasks, same k, same frozen model. In the runner:
     pin — max_nudges included — so a run measures the harness as shipped. The number
     of nudges a run needed is on every run line (`nudges`; 0 for older lines that
     predate the field) and in a "nudges" column of the table.
+
+Week 4c added three behaviours to the loop that would otherwise arrive here silently:
+the repeat hard stop (a run ends "stuck" after three identical calls with identical
+results), the wrap-up call (one extra model call on an unfinished run) and context
+clearing (OllamaProvider now tells the loop its num_ctx, so clearing would switch
+itself on at 75% of 8192). Round three — the 12/27 -> 26/27 result — was measured
+without them, and replaying its transcripts under the new rules changes the one
+qwen3:8b failure from max_steps to "stuck", adds a wrap-up reply as the last
+assistant message of every unfinished run (which is what `last_stop_reason` and the
+token totals read), and puts one round-two run within 2% of the clearing trigger. So
+the runner PINS all three off (HARNESS_SETTINGS, passed by build_agent) and records
+the three values on every run line. A rung that turns them on is a new, labelled
+measurement, not a different harness under the same label.
 """
 
 from __future__ import annotations
@@ -167,6 +180,11 @@ SYSTEM_PROMPT = (
 )
 MAX_STEPS = 12
 NUM_CTX = 8192
+# The Week 4c loop behaviours, pinned OFF for the frozen-model rungs: see the module
+# docstring. max_repeats 0 = no hard stop (the Week 4b advisory note still fires),
+# wrap_up False = no post-mortem model call, context_window 0 = clearing off even
+# though the provider knows its window. Recorded on every runs.jsonl line.
+HARNESS_SETTINGS: dict = {"max_repeats": 0, "wrap_up": False, "context_window": 0}
 # Output tokens per step, for every model. A tool call is a few dozen tokens and a
 # final answer a few hundred (Qwen 2.5 peaked at 211 in the smoke test); 2048 is far
 # above either and exists only to stop a step that rambles. See SpikeProvider.
@@ -174,6 +192,26 @@ NUM_PREDICT = 2048
 DEFAULT_SEED_BASE = 42
 DEFAULT_TEMPERATURE = 0.0
 REQUEST_TIMEOUT = 300  # seconds per model call; a 7B model on a laptop can need a while
+
+
+def build_agent(provider: OllamaProvider, workspace: Workspace) -> Agent:
+    """The Agent every spike run uses — the one place its harness settings are chosen.
+
+    Only what the spike must pin is passed. Everything else — the nudge limit
+    (max_nudges), hooks, the approver — is the Agent's own default, so a run
+    measures the harness as shipped. The exception is HARNESS_SETTINGS: the three
+    Week 4c behaviours are switched off explicitly, because the frozen rung was
+    measured without them and a default that changes under the same label is not
+    a measurement (module docstring).
+    """
+    return Agent(
+        provider=provider,
+        registry=ToolRegistry(spike_tools(workspace)),  # sub-agents (Week 4b-B)
+        system_prompt=system_prompt_for(workspace),
+        max_steps=MAX_STEPS,
+        policy=Policy(POLICY_RULES),
+        **HARNESS_SETTINGS,
+    )
 
 
 def system_prompt_for(workspace: Workspace) -> str:
@@ -745,6 +783,14 @@ def run_once(
         "last_stop_reason": None,
         "context_overflow": False,
         "final_text": "",
+        # The Week 4c loop settings this run was made with (HARNESS_SETTINGS), so a
+        # line from a rung that switches them on can never be confused with one from
+        # the frozen rungs. Absent from lines written before the field existed,
+        # which all ran with the loop's Week 4b behaviour, i.e. these very values.
+        **HARNESS_SETTINGS,
+        # The loop's own account of an unfinished run (RunResult.digest, Week 4c):
+        # one line per tool call with its outcome. None for a finished run.
+        "digest": None,
         "error": None,
         "placement": None,
         "transcript": None,
@@ -762,15 +808,11 @@ def run_once(
         )
         workspace = Workspace(workspace_dir)
 
-        # Only what the spike must pin is passed. Everything else — the nudge limit
-        # (max_nudges), hooks, the approver — is the Agent's own default, so a run
-        # measures the harness as shipped, not a spike-only configuration.
-        agent = Agent(
-            provider=provider,
-            registry=ToolRegistry(spike_tools(workspace)),  # sub-agents (Week 4b-B)
-            system_prompt=system_prompt_for(workspace),
-            max_steps=MAX_STEPS,
-            policy=Policy(POLICY_RULES),
+        agent = build_agent(provider, workspace)
+        # The record says what the agent was actually built with, not what the
+        # constant says it should have been.
+        record.update(
+            max_repeats=agent.max_repeats, wrap_up=agent.wrap_up, context_window=agent.context_window
         )
 
         started = time.perf_counter()
@@ -811,6 +853,7 @@ def run_once(
                 # getattr: the field is new in Week 4b, and a RunResult from an
                 # older harness must not crash the runner.
                 "nudges": getattr(result, "nudges", 0),
+                "digest": getattr(result, "digest", None),
             }
         )
 
@@ -1097,8 +1140,11 @@ def build_report(
         f"Settings that make runs comparable: {temp_note}, seed {seed_base} + run index, "
         f"num_ctx {NUM_CTX}, num_predict {NUM_PREDICT} per step, max_steps {MAX_STEPS}, one "
         "HTTP attempt per call (no retries), one shared policy and tool set, think=False "
-        f"for every Qwen 3 family tag.{options_note} Runs append to `runs.jsonl`; delete "
-        "the results directory for a clean slate.",
+        f"for every Qwen 3 family tag, and the Week 4c loop behaviours off (max_repeats "
+        f"{HARNESS_SETTINGS['max_repeats']}, wrap_up {HARNESS_SETTINGS['wrap_up']}, "
+        f"context_window {HARNESS_SETTINGS['context_window']}; each line records its "
+        f"own).{options_note} Runs append to `runs.jsonl`; delete the results directory "
+        "for a clean slate.",
         width=80,
     )
     return f"""# Model spike results

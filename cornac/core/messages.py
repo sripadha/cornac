@@ -62,16 +62,35 @@ class Usage:
 
     input_tokens: int = 0
     output_tokens: int = 0
+    # Prompt-cache accounting (Week 4c). Anthropic bills a cached prefix separately
+    # from `input_tokens`: tokens read from the cache come back as cache_read_tokens
+    # and tokens written into it as cache_write_tokens, and `input_tokens` then holds
+    # only the uncached remainder. Providers without a cache leave both at 0, so for
+    # them prompt_tokens == input_tokens and nothing changes.
+    cache_read_tokens: int = 0
+    cache_write_tokens: int = 0
 
     def __add__(self, other: Usage) -> Usage:
         return Usage(
             input_tokens=self.input_tokens + other.input_tokens,
             output_tokens=self.output_tokens + other.output_tokens,
+            cache_read_tokens=self.cache_read_tokens + other.cache_read_tokens,
+            cache_write_tokens=self.cache_write_tokens + other.cache_write_tokens,
         )
 
     @property
     def total_tokens(self) -> int:
-        return self.input_tokens + self.output_tokens
+        """Everything the run was billed for, cached or not."""
+        return self.prompt_tokens + self.output_tokens
+
+    @property
+    def prompt_tokens(self) -> int:
+        """How big the prompt actually was, cache included.
+
+        This is the number to compare against a model's context window: a cached
+        prefix still occupies the window even though it is billed at a discount.
+        """
+        return self.input_tokens + self.cache_read_tokens + self.cache_write_tokens
 
 
 @dataclass

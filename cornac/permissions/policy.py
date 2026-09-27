@@ -238,6 +238,16 @@ class Policy:
         """Record an 'always allow'/'never' choice for the rest of this session."""
         self._session[tool_name] = decision
 
+    def has_deny_list(self, tool_name: str) -> bool:
+        """True if this tool's rule carries deny patterns that outlive an "always".
+
+        What the prompt uses to tell the user the truth about "always": with a deny
+        list, "always" skips the question and the list still refuses; without one,
+        "always" means every call of that tool runs unasked from now on.
+        """
+        rule = self._tools.get(tool_name)
+        return isinstance(rule, dict) and bool(rule.get("deny"))
+
     def check(self, call: ToolCall) -> Decision:
         """Decide what to do with this tool call: ALLOW, DENY, or ASK."""
         override = self._session.get(call.name)

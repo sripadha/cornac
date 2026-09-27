@@ -26,7 +26,33 @@ Events fired by the agent (see core/agent.py):
     pre_tool_use(call)                    -> return Decision.DENY to veto the call
     on_permission_decision(call, decision)
     post_tool_use(call, result)
-    on_stop(final_text)                   -> final_text is None if max_steps was hit
+    on_stuck(call, n)                     -> the model made this identical call, for the
+                                             identical result, n times (max_repeats); the
+                                             run is ending with stop_reason "stuck"
+                                             (Week 4c). The note the result carried is
+                                             advisory; this is the hard stop.
+    on_context_clear(cleared, freed_chars)-> before a model call the loop replaced
+                                             `cleared` old tool results with a one-line
+                                             note, freeing `freed_chars` characters, to
+                                             keep the prompt inside the context window
+                                             (Week 4c). Fired only when at least one
+                                             result was cleared.
+    on_wrap_up(summary)                   -> a run that gave up (max_steps or stuck) was
+                                             asked, with the tools off, for a four-line
+                                             account of its partial work; `summary` is
+                                             that text, or None if it said nothing
+                                             (Week 4c). Not fired when the wrap-up is
+                                             disabled or its call failed. Like the
+                                             nudge, the exchange is the harness's, so it
+                                             fires neither on_user_message nor
+                                             on_assistant_message.
+    on_stop(final_text)                   -> final_text is None if the run gave up
+                                             (max_steps or stuck); the wrap-up, if any,
+                                             has already happened by then
+    on_run_end(result)                    -> fired LAST, for EVERY run — done, max_steps
+                                             or stuck — with the RunResult run() is about
+                                             to return (Week 4c). One event a transcript
+                                             writer can rely on to close a run.
 
 Fired by the spawn_agent tool on the parent's bus (Week 4b-B; see
 tools/builtin/spawn.py):
@@ -40,8 +66,9 @@ on_permission_decision, post_tool_use — are forwarded, so a veto or an auditor
 registered on the root agent applies to, and sees, every tool call in the whole
 delegation tree; pre_tool_use is forwarded as a gate, so a DENY (or a crash) on the
 parent's bus vetoes the child's call too. The conversation events — on_user_message,
-on_assistant_message, on_nudge, on_stop — are not forwarded: they describe one
-agent's own dialogue, and a child's on_stop is not the parent's.
+on_assistant_message, on_nudge, on_stop, and the Week 4c on_stuck, on_context_clear,
+on_wrap_up and on_run_end — are not forwarded: they describe one agent's own dialogue
+and one agent's own run, and a child's on_stop (or on_run_end) is not the parent's.
 
 Two rules govern a callback that raises:
 

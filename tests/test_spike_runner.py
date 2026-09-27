@@ -160,3 +160,21 @@ def test_the_spike_advertises_the_ten_tools_the_model_was_frozen_with(spike, tmp
     # Nothing the model can see is left for the policy's default deny to swallow
     # silently: every advertised tool has an explicit rule.
     assert set(names) <= set(spike.POLICY_RULES["tools"])
+
+
+# --- the Week 4c loop behaviours are pinned off, not inherited -------------------------
+
+def test_the_runner_pins_the_week_4c_loop_behaviours_off_and_records_them(spike, tmp_path):
+    # OllamaProvider tells the loop its num_ctx, so an Agent built with defaults would
+    # clear context at 75% of 8192, stop "stuck" after three identical calls and make a
+    # wrap-up call on every unfinished run — none of which round three was measured
+    # with. build_agent switches all three off explicitly; the provider still knows
+    # its window, which is what proves the pin rather than an absent value.
+    provider = spike.make_provider("qwen3.5:4b", seed=1, temperature=0.0)
+    agent = spike.build_agent(provider, Workspace(tmp_path))
+
+    assert spike.HARNESS_SETTINGS == {"max_repeats": 0, "wrap_up": False, "context_window": 0}
+    assert (agent.max_repeats, agent.wrap_up, agent.context_window) == (0, False, 0)
+    assert provider.context_window == spike.NUM_CTX          # inherited it would have been 8192
+    assert agent.max_steps == spike.MAX_STEPS
+    assert agent.max_nudges == 1                              # the rest stays the Agent's default

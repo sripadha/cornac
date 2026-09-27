@@ -92,3 +92,22 @@ def test_the_prompt_shows_the_call_on_stdout(monkeypatch, capsys):
     out = capsys.readouterr().out
     assert "cornac wants to run a tool" in out
     assert "run_bash(command=\'pytest -q\')" in out
+
+
+def test_always_says_deny_patterns_still_apply_only_when_the_tool_has_some(monkeypatch, capsys):
+    # The confirmation line must tell the truth about what "always" just did. With a
+    # deny list, the list still refuses; without one, every call now runs unasked.
+    with_list = Policy({"tools": {"run_bash": {"deny": ["rm -rf"], "default": "ask"}}})
+    answers(monkeypatch, "a")
+    cli_ask(CALL, with_list)
+    assert "its deny patterns still apply" in capsys.readouterr().out
+    assert with_list.has_deny_list("run_bash")
+
+    plain = Policy({"tools": {"run_bash": "ask"}})
+    answers(monkeypatch, "a")
+    cli_ask(CALL, plain)
+    out = capsys.readouterr().out
+    assert "deny patterns" not in out
+    assert "every run_bash call now runs without asking" in out
+    assert not plain.has_deny_list("run_bash")
+    assert not plain.has_deny_list("never_mentioned")

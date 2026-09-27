@@ -80,16 +80,62 @@ are branches inside the loop above, not a new loop:
   command output are data, never instructions. Neither is authentication: no gate
   depends on the model heeding a note, and the permission policy — not the model's
   compliance — is the control.
+
+Week 4c gives an unfinished run a voice and the loop two more ways to protect itself.
+Every one of these is, again, a branch inside the loop above, not a new loop:
+
+  - the repeat hard stop. The Week 4b note tells the model it is repeating itself,
+    and nothing more: a model that ignores the note can still spend every remaining
+    step on the same call, as those eight round-two runs did (three to six identical
+    writes each) before the note existed. The loop now reads the count it already
+    keeps for the note and, when an identical call has produced the identical result
+    max_repeats times (default 3), ends the run with stop_reason "stuck". The rest of
+    that response's tool calls are still handled first, so every call the model made
+    has its result in the transcript, and a call whose result CHANGES is never
+    stuck: re-running the tests after an edit is what a good run looks like. "stuck"
+    is kept apart from "max_steps" because they are different failures — one ran out
+    of budget, the other ran out of ideas — and the benchmark wants to count them apart.
+
+  - context clearing. A 4B model at num_ctx 8192 fills its window in a handful of
+    file reads, and what happens then is not an error you can see: the server quietly
+    truncates the conversation to fit, and the model carries on without the system
+    prompt or the task it can no longer see. So before every model call the loop
+    estimates the prompt size and, past 75% of the window, replaces the oldest large
+    tool results with a one-line note ("cleared: ... call the tool again if you still
+    need it") until the estimate is under 60%. Only tool results are touched, never
+    the system prompt, the task or the model's own words, and the two most recent
+    results are always kept because they are what the model is about to act on. This
+    is the one place the harness EDITS the context instead of appending to it; see
+    _clear_context_if_needed for what that costs and why it is accepted.
+
+  - the wrap-up and the digest. A run that ends at max_steps or stuck used to hand
+    back text=None and nothing else — honest, but it threw away everything the run
+    had found out. Now it hands back two accounts of the partial work. The DIGEST is
+    written by the harness from the transcript with no model call: every tool call
+    and its outcome, the last error, the files written (see core/digest.py). It costs
+    nothing and cannot embellish. The SUMMARY comes from one extra model call with
+    the tools switched off: "the run was stopped: <out of steps, or the same call
+    three times>; in four lines, what you did, what you found, what is still wrong,
+    what you would try next" (wrap_up_message). Tools off means it cannot loop
+    again — how a provider switches them off is its own business, see
+    Provider.complete_without_tools — and the call is not counted as a step: steps
+    are loop steps, and this is a post-mortem. `text` stays None: neither account is
+    an answer, and a parent reading them must see an unfinished run, not a result.
+    The 12/27 -> 26/27 result came partly from being honest about failure, and the
+    wrap-up keeps that: the run is declared unfinished by the harness, and the model
+    is told in so many words not to claim a success it did not earn.
 """
 
 from __future__ import annotations
 
 import json
 import re
+import sys
 import time
 from dataclasses import replace
 from typing import Callable
 
+from cornac.core.digest import digest as write_digest
 from cornac.core.messages import Message, ToolCall, ToolResult, Usage
 from cornac.core.result import RunResult
 from cornac.hooks.bus import HOOK_FAILED, HookBus
@@ -124,6 +170,45 @@ NUDGE_MESSAGE = (
     "if you are finished, give your final answer without describing further steps."
 )
 
+# The wrap-up (Week 4c): what a model whose run was stopped is asked, with the tools
+# switched off. It names WHY the run stopped (the `{why}` slot, filled from
+# WRAP_UP_REASONS by wrap_up_message), because "you are out of steps" is false for a
+# stuck run and a model told the wrong reason has nothing true to anchor its "what is
+# still wrong" line on; it says that tools are gone so the model does not try; it asks
+# for the four things a retry needs; and it closes on the rule that keeps a summary
+# honest. That rule is unconditional on purpose. The first version said "do not claim
+# the task is complete unless every step above succeeded", and a stuck run's steps
+# DID succeed by the model's reckoning (write_file returned ok three times) — read
+# literally, that licensed exactly the summary-that-sounds-like-success this message
+# exists to prevent. On the benchmark model, at temperature 0.7, two of four such
+# wrap-ups claimed completion. So the run is declared unfinished by the harness, not
+# left to the model to judge, and the reply is asked to say so in its first word.
+WRAP_UP_MESSAGE = (
+    "The run was stopped: {why}. You cannot call tools any more; do not continue the "
+    "task. In at most four short lines, state: what you did, what you found, what is "
+    "still wrong or unfinished, and what you would try next. The task is NOT complete. "
+    "Begin your reply with 'Unfinished:'. Do not claim the task is complete, and do not "
+    "say that anything works unless you saw it work."
+)
+
+# The `{why}` for each way a run can be stopped; the details come from the loop.
+WRAP_UP_REASONS = {
+    "max_steps": "you used all {max_steps} of your steps",
+    "stuck": "you made the same {name} call {n} times and got the same result every time",
+}
+
+
+def wrap_up_message(reason: str, **details) -> str:
+    """The wrap-up request for a run stopped for `reason` ("max_steps" or "stuck").
+
+    `details` fill that reason's line in WRAP_UP_REASONS — max_steps for one, the
+    tool's name and the repeat count for the other. An unknown reason gets a neutral
+    line rather than an error: this is composed at the moment a run has already gone
+    wrong, and the account of a failure must not become a second failure.
+    """
+    why = WRAP_UP_REASONS.get(reason, "the run ended without an answer")
+    return WRAP_UP_MESSAGE.format(why=why.format(**details))
+
 # The prefix that marks text the loop itself put into a tool result, for whoever reads
 # the transcript. Only the loop emits it bare: see _neutralise_marker.
 MARKER = "[cornac]"
@@ -134,6 +219,29 @@ REPEAT_NOTE = (
     "same result. Repeating it will not change the outcome; try a different approach "
     "(a different edit, reading the file first, or asking for help)."
 )
+
+# What replaces a tool result that context clearing removed (Week 4c). It names the
+# tool and the size so the model knows what it lost, and tells it the way back.
+CLEARED_NOTE = (
+    MARKER + " cleared: this earlier {name} result ({n} chars) was removed to free "
+    "context. Call the tool again if you still need it."
+)
+
+# Context clearing (Week 4c): start clearing when the prompt is estimated above
+# CLEAR_ABOVE of the window, and stop once it is below CLEAR_DOWN_TO. The gap between
+# the two is what stops the loop from clearing one result on every single step once
+# the window is nearly full. The last KEEP_LAST_TOOL_RESULTS results are never touched
+# (they are what the model is about to act on), and a result under MIN_CLEARABLE_CHARS
+# is not worth the note that would replace it — the note itself is about 120 chars,
+# which is also why a cleared result is never "cleared" a second time.
+CLEAR_ABOVE = 0.75
+CLEAR_DOWN_TO = 0.60
+KEEP_LAST_TOOL_RESULTS = 2
+MIN_CLEARABLE_CHARS = 200
+
+# The floor for the prompt-size estimate: about four characters per token holds for
+# English prose and is on the generous side for code, which is denser in tokens.
+CHARS_PER_TOKEN = 4
 
 
 def _neutralise_marker(content: str) -> str:
@@ -180,6 +288,9 @@ class Agent:
         approver: Approver | None = None,
         hooks: HookBus | None = None,
         max_nudges: int = 1,
+        max_repeats: int = 3,
+        wrap_up: bool = True,
+        context_window: int | None = None,
     ):
         self.provider = provider
         self.registry = registry or ToolRegistry()
@@ -190,6 +301,37 @@ class Agent:
         self.hooks = hooks or HookBus()
         self.max_nudges = max_nudges  # continue nudges per run(); 0 disables them
         self._repeats: dict = {}      # per-run (tool, args) -> (last result, count)
+        # per-run id(tool Message) -> its key in _repeats, so context clearing can
+        # forget the streak of a result it has just removed (see _forget_repeat).
+        self._result_keys: dict[int, tuple] = {}
+        # --- Week 4c -------------------------------------------------------------------
+        # Identical call, identical result, this many times -> the run ends "stuck".
+        # 0 disables the hard stop; the advisory note from Week 4b is kept either way.
+        # 1 is refused: _note_repeats counts a fresh call as its own first occurrence,
+        # so "1" would end every run on its first tool call — a harness that cannot
+        # run any tool, and one a caller meaning "stop on the first repeat" would not
+        # expect. That caller wants 2.
+        if max_repeats < 0 or max_repeats == 1:
+            raise ValueError(
+                f"max_repeats must be 0 (no hard stop) or at least 2, got {max_repeats}: "
+                "a call's first occurrence already counts as 1, so 1 would end every run "
+                "on its first tool call"
+            )
+        self.max_repeats = max_repeats
+        # On max_steps or stuck, ask the model for a four-line account with the tools
+        # off (RunResult.summary). False -> summary is None and no extra call is made.
+        self.wrap_up = wrap_up
+        # The context window the loop sizes its clearing against: the caller's number
+        # if given, else the provider's (Ollama knows its num_ctx, Anthropic its
+        # model's limit). None means nobody knows, and clearing stays off — the loop
+        # will not guess at a limit and throw away results to fit a number it made up.
+        # 0 also switches clearing off, explicitly, even when the provider knows its
+        # window: the way for a caller (the benchmark runner) to measure the loop
+        # WITHOUT clearing on a provider that would otherwise turn it on.
+        if context_window is None:
+            context_window = getattr(provider, "context_window", None)
+        self.context_window = context_window
+        # --- end Week 4c ---------------------------------------------------------------
         self.messages: list[Message] = []
         if system_prompt:
             self.messages.append(Message.system(system_prompt))
@@ -212,13 +354,20 @@ class Agent:
     def run(self, user_message: str) -> RunResult:
         """Run the agent to completion on one user message.
 
-        Returns a RunResult: the final text (None if the loop hit max_steps), why it
-        stopped, the run's cost in steps, seconds and tokens, and how many nudges it took.
+        Returns a RunResult: the final text (None if the loop gave up), why it
+        stopped ("done", "max_steps" or "stuck"), the run's cost in steps, seconds
+        and tokens, how many nudges it took, and — for a run that gave up — the
+        digest and the model's summary of its partial work.
+
+        `steps` counts loop steps: one per model call made in pursuit of the task.
+        The wrap-up call that asks a run that gave up to account for itself is a
+        post-mortem, not a step, and is not counted (its tokens are, in `usage`).
         """
         started = time.perf_counter()
-        steps = 0          # one per provider.complete() call
+        steps = 0          # one per provider.complete() call inside the loop
         nudges = 0         # continue nudges sent so far; capped by max_nudges
         self._repeats = {}  # the repeated-call counter starts fresh every run
+        self._result_keys = {}
         # --- sub-agents (Week 4b-B) ---
         # Running token total (providers may leave Message.usage None) and the count
         # of children absorbed so far; on self so absorb_child() can reach them.
@@ -231,11 +380,17 @@ class Agent:
                 tool.reset_for_run()
         # --- end sub-agents ---
 
+        # Where this run begins in the message list, so the digest of a run that
+        # gives up covers this run and not the ones before it (Week 4c).
+        since = len(self.messages)
         user = Message.user(user_message)
         self.messages.append(user)
         self.hooks.fire("on_user_message", user)
 
         for _ in range(self.max_steps):
+            # Make room first (Week 4c): a prompt that overflows the window is
+            # truncated by the server without a word, and the loop would never know.
+            self._clear_context_if_needed()
             response = self.provider.complete(self.messages, self.registry.schemas())
             steps += 1
             if response.usage is not None:
@@ -267,34 +422,233 @@ class Agent:
                     continue
 
                 self.hooks.fire("on_stop", response.text)
-                return RunResult(
-                    text=response.text,
-                    stop_reason="done",
-                    steps=steps,
-                    duration=time.perf_counter() - started,
-                    usage=self._run_usage,
-                    nudges=nudges,
-                    children=self._children,  # sub-agents (Week 4b-B)
-                )
+                return self._finish(started, steps, nudges, text=response.text, stop_reason="done")
 
             # Otherwise handle every requested tool, gated by hooks and permissions.
+            stuck: tuple[ToolCall, int] | None = None
             for call in response.tool_calls:
-                result = self._note_repeats(call, self._handle_call(call))
+                result, repeats = self._note_repeats(call, self._handle_call(call))
                 self.hooks.fire("post_tool_use", call, result)
-                self.messages.append(Message.from_tool_result(result))
+                message = Message.from_tool_result(result)
+                self.messages.append(message)
+                # Which streak this result belongs to, for context clearing to undo.
+                self._result_keys[id(message)] = self._repeat_key(call)
+                # The repeat hard stop (Week 4c) is noted here and acted on after the
+                # loop, so the response's remaining calls are still handled and every
+                # call the model made has its result in the transcript.
+                if stuck is None and self.max_repeats and repeats >= self.max_repeats:
+                    stuck = (call, repeats)
+
+            if stuck is not None:
+                # The model has asked the same question max_repeats times and got the
+                # same answer every time. More steps would buy more of the same.
+                self.hooks.fire("on_stuck", *stuck)
+                return self._give_up("stuck", since, started, steps, nudges, stuck=stuck)
 
         # The safety rail tripped. There is no final answer, and we say so honestly
         # (text=None) instead of inventing one the caller might mistake for the model's.
+        return self._give_up("max_steps", since, started, steps, nudges)
+
+    # --- ending a run (Week 4c) -----------------------------------------------------
+    def _give_up(
+        self,
+        reason: str,
+        since: int,
+        started: float,
+        steps: int,
+        nudges: int,
+        stuck: tuple[ToolCall, int] | None = None,
+    ) -> RunResult:
+        """End a run that did not finish — max_steps or stuck — with an account of it.
+
+        The digest is built FIRST, from the run's transcript as it stands, so that it
+        describes the run and not the wrap-up exchange about to be appended to it.
+        Then, if enabled, the model is asked for its own summary, and told WHY it is
+        being asked — out of steps, or the same call `n` times for the same result
+        (`stuck` carries the call and the count) — since the two are different
+        failures and the summary should name the right one. on_stop(None) keeps its
+        Week 4 meaning ("gave up", not "finished"), and on_run_end follows as it does
+        for every run.
+        """
+        account = write_digest(self.messages, since)
+        summary = None
+        if self.wrap_up:
+            if stuck is not None:
+                call, n = stuck
+                request = wrap_up_message(reason, name=call.name, n=n)
+            else:
+                request = wrap_up_message(reason, max_steps=self.max_steps)
+            summary = self._wrap_up(request)
         self.hooks.fire("on_stop", None)
-        return RunResult(
-            text=None,
-            stop_reason="max_steps",
+        return self._finish(
+            started, steps, nudges, text=None, stop_reason=reason, digest=account, summary=summary
+        )
+
+    def _wrap_up(self, request: str) -> str | None:
+        """One model call with the tools switched off: "account for yourself".
+
+        The request goes in as a user message, like the nudge, so the transcript
+        shows exactly what the model was asked; like the nudge it is a harness
+        message and fires no on_user_message, and its reply fires on_wrap_up rather
+        than on_assistant_message — the dialogue is over, this is the post-mortem.
+
+        Tools off is what makes the call safe to make: with nothing to call, the
+        model cannot start another loop, however much it wants to. HOW they are
+        switched off is the provider's business (Provider.complete_without_tools):
+        the local backends are simply sent no tool definitions, but Anthropic's API
+        rejects a history full of tool_use/tool_result blocks that arrives without
+        the definitions, so that provider keeps sending them and forbids their use
+        with tool_choice instead. The loop hands over the registry's schemas and
+        lets the provider choose; the first version passed `tools=[]` to every
+        provider and the wrap-up silently failed on every unfinished Anthropic run.
+        The call still goes through the context check first, because the last tool
+        results may have pushed the prompt past the window.
+
+        A failure here (provider down, script exhausted in a test) is reported on
+        stderr and gives summary None. The run itself still returns: the wrap-up is
+        an extra, and an extra must never turn a finished run into a crash. The
+        request message is removed again on failure, so the transcript is left
+        exactly as the run left it: an unanswered "do not continue the task" sitting
+        right before the next run()'s task would be read by a small model as an
+        instruction about that task.
+        """
+        self._clear_context_if_needed()
+        self.messages.append(Message.user(request))
+        try:
+            without_tools = getattr(self.provider, "complete_without_tools", None)
+            if without_tools is None:  # a provider from before the seam existed
+                reply = self.provider.complete(self.messages, [])
+            else:
+                reply = without_tools(self.messages, self.registry.schemas())
+        except Exception as exc:  # noqa: BLE001 — a post-mortem must not crash the run
+            self.messages.pop()
+            print(
+                f"{MARKER} wrap-up call failed ({type(exc).__name__}: {exc}); "
+                "this run has no summary.",
+                file=sys.stderr,
+            )
+            return None
+        if reply.tool_calls:
+            # The model was told tools are off and offered none, and asked anyway.
+            # Nothing runs, and the calls are dropped from the stored reply: a
+            # tool_use with no tool_result after it is an invalid transcript for
+            # every provider, and would break the next run() on this same agent.
+            reply = replace(reply, tool_calls=[])
+        self.messages.append(reply)
+        if reply.usage is not None:
+            self._run_usage = self._run_usage + reply.usage
+        summary = (reply.text or "").strip() or None
+        self.hooks.fire("on_wrap_up", summary)
+        return summary
+
+    def _finish(self, started: float, steps: int, nudges: int, **outcome) -> RunResult:
+        """Build this run's RunResult and fire on_run_end — the last thing every run does.
+
+        `outcome` is the part that differs between a finished run and one that gave
+        up (text, stop_reason, digest, summary); the bookkeeping is the same for all.
+        on_run_end gets the very object the caller gets, so a transcript writer
+        records exactly what run() returned.
+        """
+        result = RunResult(
             steps=steps,
             duration=time.perf_counter() - started,
             usage=self._run_usage,
             nudges=nudges,
             children=self._children,  # sub-agents (Week 4b-B)
+            **outcome,
         )
+        self.hooks.fire("on_run_end", result)
+        return result
+    # --- end ending a run -------------------------------------------------------------
+
+    # --- context clearing (Week 4c) ---------------------------------------------------
+    def _clear_context_if_needed(self) -> None:
+        """Replace the oldest large tool results with a note when the prompt nears the window.
+
+        Why the harness does this at all: a model's context window is a hard limit,
+        and a 4B model at num_ctx 8192 reaches it in a few file reads. Past it, the
+        server does not fail — it drops tokens to fit, and the model carries on
+        without whatever it lost, which is the system prompt and the task first of
+        all. Clearing old tool results on purpose, from the oldest, is the loop
+        choosing what to lose while it still can: the contents of a file the model
+        already acted on three steps ago, rather than the instructions.
+
+        What it costs: this is the one place the harness EDITS earlier messages
+        instead of appending. Every provider caches the prompt by prefix, so from the
+        first cleared message onward the cached prefix no longer matches and that
+        part of the prompt is re-read on the next call. That is accepted, and it is
+        what dsh, Claude Code and Pydantic-AI do as well: a re-read costs one call's
+        worth of time, and a truncated window costs the task. Nothing about a cleared
+        message changes except its text, so the transcript stays valid on the wire
+        (a tool result still answers its tool call) and still shows, in place, that
+        something was removed and why.
+
+        How the prompt is sized: max(what the model last reported, characters / 4).
+        The report is the truth when there is one; Ollama omits it when the prompt
+        was served from cache, so the character count is the floor. While clearing,
+        the estimate shrinks in proportion to the characters removed (the ratio the
+        model last measured, never under a quarter token per character), because the
+        only way to get a fresh report would be to make the call being trimmed.
+        Clearing stops below CLEAR_DOWN_TO, or when nothing clearable is left.
+        """
+        window = self.context_window
+        if not window:
+            return
+
+        chars = sum(len(m.text) for m in self.messages)
+        if chars == 0:
+            return
+        reported = self._last_reported_prompt_tokens()
+        tokens_per_char = max(reported / chars, 1 / CHARS_PER_TOKEN)
+        estimate = chars * tokens_per_char  # == max(reported, chars // 4) at this point
+        if estimate <= CLEAR_ABOVE * window:
+            return
+
+        tool_messages = [m for m in self.messages if m.role == "tool"]
+        candidates = tool_messages[: len(tool_messages) - KEEP_LAST_TOOL_RESULTS]
+        cleared = freed = 0
+        for message in candidates:  # oldest first: the least likely to still matter
+            if estimate < CLEAR_DOWN_TO * window:
+                break
+            before = len(message.text)
+            if before < MIN_CLEARABLE_CHARS:
+                continue  # too small to be worth a note; also skips already-cleared ones
+            message.text = CLEARED_NOTE.format(name=message.name, n=before)
+            self._forget_repeat(message)
+            saved = before - len(message.text)
+            freed += saved
+            chars -= saved
+            estimate = chars * tokens_per_char
+            cleared += 1
+
+        if cleared:
+            self.hooks.fire("on_context_clear", cleared, freed)
+
+    def _forget_repeat(self, message: Message) -> None:
+        """Stop counting a cleared result against the repeat cap.
+
+        The note that replaces a cleared result says "call the tool again if you
+        still need it", and a model that does exactly that gets back the identical
+        content — which _note_repeats would count as a repeat, tag with "repeating
+        it will not change the outcome" (the two notes contradicting each other),
+        and on the third time end the run as stuck. Verified: reads a,b,c,d,a,e,f,a
+        at a 1000-token window ended "stuck" although every earlier `a` had been
+        cleared by the loop itself. So a cleared result leaves the streak it was
+        counted in — but only if no OTHER result for the same call is still in
+        view: with an uncleared identical result on screen (and its note), the
+        model repeating it once more is the stuck case the cap exists for.
+        """
+        key = self._result_keys.pop(id(message), None)
+        if key is not None and key not in self._result_keys.values():
+            self._repeats.pop(key, None)
+
+    def _last_reported_prompt_tokens(self) -> int:
+        """The prompt size the model last reported, or 0 if no call has reported one."""
+        for message in reversed(self.messages):
+            if message.role == "assistant" and message.usage is not None:
+                return message.usage.prompt_tokens
+        return 0
+    # --- end context clearing -----------------------------------------------------------
 
     # --- sub-agents (Week 4b-B) ---------------------------------------------------
     @property
@@ -389,8 +743,13 @@ class Agent:
             )
         return self.registry.execute(call)
 
-    def _note_repeats(self, call: ToolCall, result: ToolResult) -> ToolResult:
+    def _note_repeats(self, call: ToolCall, result: ToolResult) -> tuple[ToolResult, int]:
         """Tag a result when the model has just repeated an identical call for an identical result.
+
+        Returns the (possibly noted) result and how many times in a row this exact
+        call has now come back with this exact content — 1 for a fresh call. The
+        loop reads that count for the Week 4c hard stop; the note here stays the
+        Week 4b advisory it always was.
 
         The note goes into the result itself — the one place the model is guaranteed
         to read — and so also reaches post_tool_use and the transcript. Nothing is
@@ -406,12 +765,19 @@ class Agent:
         loop adds a note that starts with one.
         """
         result = replace(result, content=_neutralise_marker(result.content))
-        # Arguments are dicts, so the key is their canonical JSON: sorted keys make
-        # {"a": 1, "b": 2} and {"b": 2, "a": 1} the same call, as they should be.
-        key = (call.name, json.dumps(call.arguments, sort_keys=True, default=str))
+        key = self._repeat_key(call)
         last_content, count = self._repeats.get(key, (None, 0))
         count = count + 1 if result.content == last_content else 1
         self._repeats[key] = (result.content, count)  # the bare content, before any note
         if count < 2:
-            return result
-        return replace(result, content=result.content + REPEAT_NOTE.format(n=count))
+            return result, count
+        return replace(result, content=result.content + REPEAT_NOTE.format(n=count)), count
+
+    @staticmethod
+    def _repeat_key(call: ToolCall) -> tuple:
+        """What makes two calls "the same call" for the repeat counter.
+
+        Arguments are dicts, so the key is their canonical JSON: sorted keys make
+        {"a": 1, "b": 2} and {"b": 2, "a": 1} the same call, as they should be.
+        """
+        return (call.name, json.dumps(call.arguments, sort_keys=True, default=str))

@@ -104,7 +104,9 @@ def test_max_steps_gives_no_text_and_says_so():
     bus = HookBus()
     bus.on("on_stop", stops.append)
 
-    agent = _agent(NeverStopsProvider(), max_steps=3, hooks=bus)
+    # max_repeats=0: this provider repeats the identical call by nature, and the rail
+    # under test here is max_steps, not the Week 4c repeat stop (tests/test_stuck.py).
+    agent = _agent(NeverStopsProvider(), max_steps=3, hooks=bus, max_repeats=0)
     result = agent.run("go")
 
     assert result.stop_reason == "max_steps"

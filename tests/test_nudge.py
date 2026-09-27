@@ -237,7 +237,9 @@ def test_the_bound_is_max_nudges_not_a_hardcoded_one():
 
 def test_a_run_that_hits_max_steps_still_reports_its_nudges():
     # announce (nudged), then two tool turns: the rail trips before any final answer.
-    agent = _agent([_announce(), _tool_turn(), _tool_turn()], max_steps=3)
+    # wrap_up=False: the script has no reply left for the Week 4c post-mortem call
+    # (tests/test_wrap_up.py covers it); this test is about the nudge count only.
+    agent = _agent([_announce(), _tool_turn(), _tool_turn()], max_steps=3, wrap_up=False)
     result = agent.run("go")
 
     assert result.stop_reason == "max_steps"
@@ -267,8 +269,9 @@ def test_no_nudge_on_the_last_permitted_step():
 
 def test_the_spike_shape_announcement_on_the_last_step_keeps_its_text():
     # Eleven tool turns, then "Let me fix that" on step 12 of 12 — the shape the
-    # benchmark used to record as a max_steps failure with no text.
-    agent = _agent([_tool_turn()] * 11 + [_announce()], max_steps=12)
+    # benchmark used to record as a max_steps failure with no text. Distinct labels:
+    # eleven identical calls would trip the Week 4c repeat stop (tests/test_stuck.py).
+    agent = _agent([_tool_turn(label=str(i)) for i in range(11)] + [_announce()], max_steps=12)
     result = agent.run("go")
 
     assert result.stop_reason == "done"
@@ -278,7 +281,8 @@ def test_the_spike_shape_announcement_on_the_last_step_keeps_its_text():
 
 def test_an_announcement_one_step_before_the_rail_is_still_nudged():
     # On step 11 of 12 there is a turn left, so the nudge goes out and step 12 answers.
-    agent = _agent([_tool_turn()] * 10 + [_announce(), _final("fixed")], max_steps=12)
+    agent = _agent([_tool_turn(label=str(i)) for i in range(10)] + [_announce(), _final("fixed")],
+                   max_steps=12)
     result = agent.run("go")
 
     assert result.stop_reason == "done" and result.text == "fixed"

@@ -14,7 +14,11 @@ When the policy can't decide, the agent pauses and asks a human right in the ter
 The "always/never" answers call policy.remember(...) so you're not re-asked every time.
 "always" is narrower than it sounds: it only skips the *question*. The policy's deny
 list stays in force — approving `pytest` with "always" does not let `sudo rm -rf /`
-through later. (See the "Session overrides" note in policy.py.)
+through later. (See the "Session overrides" note in policy.py.) That protection is
+only as real as the deny list, though: a tool whose rule is a plain "ask" has none,
+and for it "always" really does mean "anything, unasked". The confirmation line says
+which of the two the user just chose, instead of promising deny patterns the policy
+may not have.
 
 This is deliberately a small, swappable function. A web UI, a Slack bot, or an automated
 test could provide a different approver with the same signature — the agent only needs
@@ -55,8 +59,11 @@ def cli_ask(call: ToolCall, policy: Policy | None = None) -> Decision:
         if answer in ("a", "always"):
             if policy is not None:
                 policy.remember(call.name, Decision.ALLOW)
-                print(f"  (won't ask about {call.name} again this session; "
-                      "its deny patterns still apply)")
+                if policy.has_deny_list(call.name):
+                    consequence = "its deny patterns still apply"
+                else:
+                    consequence = f"every {call.name} call now runs without asking"
+                print(f"  (won't ask about {call.name} again this session; {consequence})")
             return Decision.ALLOW
         if answer in ("e", "never"):
             if policy is not None:

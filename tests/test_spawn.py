@@ -6,19 +6,39 @@ single ordered script of replies serves them all. The provider also records what
 was shown on each call — the message list and the tool schemas — because that is the
 only way to check the two promises that matter most: a child starts with a fresh
 context, and a child holds no tool its parent did not hand it.
+
+Week 4c adds the unfinished-child tests at the bottom: a child that gives up now
+hands back its partial work (a harness digest and the model's own wrap-up) behind an
+unmistakable header, as an error. The provider gained one habit for it — see
+ScriptedProvider.complete — so the ordered scripts keep working once the loop makes
+its extra wrap-up call.
 """
+
+import inspect
 
 import pytest
 
+import cornac.tools.builtin.spawn as spawn_module
 from cornac import Agent, Message, ToolRegistry, Usage
 from cornac.core.agent import NUDGE_MESSAGE
 from cornac.core.messages import ToolCall
+from cornac.core.result import RunResult
 from cornac.hooks.bus import HookBus
 from cornac.permissions.policy import Decision, Policy
 from cornac.providers.base import Provider
 from cornac.tools.base import Tool, tool
 from cornac.tools.builtin import default_tools
-from cornac.tools.builtin.spawn import DEFAULT_CHILD_PROMPT, REPLY_HEADER, SpawnAgent
+from cornac.tools.builtin.spawn import (
+    DEFAULT_CHILD_PROMPT,
+    DIGEST_LABEL,
+    INHERITED_SETTINGS,
+    NO_DIGEST,
+    REPLY_HEADER,
+    SUMMARY_LABEL,
+    UNFINISHED_HEADER,
+    SpawnAgent,
+    _inherited_settings,
+)
 from cornac.tools.workspace import Workspace
 
 # Side-effect flags: the only trustworthy proof that a tool did or did not run.
@@ -42,12 +62,21 @@ def fake_bash(command: str = "") -> str:
 class ScriptedProvider(Provider):
     """Plays every agent in the tree from one ordered script, recording what it saw."""
 
-    def __init__(self, script):
+    def __init__(self, script, wrap_up_reply="Ran out of steps; partial work only."):
         self._script = list(script)
         self.seen_messages: list[list[Message]] = []  # a snapshot per complete() call
         self.seen_tools: list[list[str]] = []         # tool names offered per call
+        # Week 4c: an agent that gives up makes one more model call with NO tools,
+        # asking for a wrap-up summary. It is answered from here, off-script, so the
+        # ordered replies stay lined up with the loop steps they were written for —
+        # and so these tests pass whether or not the loop makes that call yet.
+        self.wrap_up_reply = wrap_up_reply
+        self.seen_wrap_ups: list[list[Message]] = []
 
     def complete(self, messages, tools):
+        if not tools:
+            self.seen_wrap_ups.append(list(messages))
+            return Message(role="assistant", text=self.wrap_up_reply)
         self.seen_messages.append(list(messages))
         self.seen_tools.append([t["name"] for t in tools])
         if not self._script:
@@ -359,7 +388,12 @@ def test_a_child_that_hits_max_steps_gives_an_error_not_an_empty_string():
     result = agent.run("go")
 
     [msg] = _tool_messages(agent)
-    assert msg.text.startswith("Error: sub-agent gave up after 2 steps without a final answer")
+    # Week 4c: the one line became a header over the child's partial work, and the
+    # result carries the error flag too; the tests at the bottom pin the full shape.
+    assert msg.is_error
+    assert msg.text.splitlines()[0] == (
+        "Sub-agent did not finish (stop_reason: max_steps, 2 steps). "
+        "Its partial work, for you to judge:")
     assert result.text == "parent goes on"
     assert result.children == 1                       # it ran, and its cost still counts
 
@@ -378,8 +412,10 @@ def test_a_provider_error_inside_the_child_becomes_an_error_result():
     bus.on("on_spawn_done", lambda result, depth: done.append(result))
 
     provider = ExplodingProvider(_spawn())
+    # wrap_up=False: the parent hits max_steps and its Week 4c post-mortem call would
+    # meet the same exploding provider; that failure path is test_wrap_up.py's subject.
     agent = Agent(provider=provider, registry=ToolRegistry([mark, SpawnAgent()]),
-                  hooks=bus, max_steps=1)
+                  hooks=bus, max_steps=1, wrap_up=False)
     result = agent.run("go")
 
     [msg] = _tool_messages(agent)
@@ -717,8 +753,9 @@ def test_a_crashed_childs_partial_usage_still_reaches_the_parent():
     child_turn = _tool_turn(label="child")
     child_turn.usage = Usage(input_tokens=500, output_tokens=50)
 
-    agent = Agent(provider=ExplodingProvider(spawn, child_turn),
-                  registry=ToolRegistry([mark, SpawnAgent()]), max_steps=1)
+    agent = Agent(provider=ExplodingProvider(spawn, child_turn),     # wrap_up=False: see the
+                  registry=ToolRegistry([mark, SpawnAgent()]),       # provider-error test above
+                  max_steps=1, wrap_up=False)
     result = agent.run("go")
 
     assert ran == ["child"]                                            # it got that far
@@ -776,3 +813,220 @@ def test_a_tool_named_twice_is_handed_down_once():
     agent.run("go")
 
     assert agent.provider.seen_tools[1] == ["mark", "spawn_agent"]
+
+
+# --- Unfinished children: partial work behind an unmistakable header (Week 4c) ----------
+#
+# A child that gave up used to come back as one line: "gave up after N steps". Now its
+# RunResult carries a harness-written digest and, when the wrap-up call ran, the model's
+# own summary, and the parent gets both — framed as an error with the header first, so
+# partial work can never pass for an answer. The shape is fixed by the Week 4c contract.
+# These tests pin it with hand-built RunResults (the loop that fills digest and summary
+# has its own tests), and check the framing end to end with a scripted child.
+
+DIGEST = (
+    "1. read_file(a.py) -> ok\n"
+    "2. run_bash(pytest -q) -> ERROR: 1 failed, 3 passed\n"
+    "Last error: 1 failed, 3 passed\n"
+    "2 model calls, 2 tool calls, 1 errors."
+)
+SUMMARY = (
+    "Read a.py and ran the tests.\n"
+    "One test still fails, on the import.\n"
+    "Unfinished: the import is not fixed.\n"
+    "Next: edit line 3 of a.py."
+)
+
+
+def _unfinished(stop_reason="max_steps", steps=10, digest=DIGEST, summary=SUMMARY):
+    """A child's RunResult for a run that gave up, as Agent.run() would build it."""
+    return RunResult(text=None, stop_reason=stop_reason, steps=steps, duration=0.0,
+                     usage=Usage(), digest=digest, summary=summary)
+
+
+def _header(stop_reason="max_steps", steps=10):
+    return UNFINISHED_HEADER.format(stop_reason=stop_reason, steps=steps)
+
+
+def test_an_unfinished_child_comes_back_as_header_digest_and_summary():
+    text = SpawnAgent()._reply(_unfinished())
+
+    assert text == (
+        "Sub-agent did not finish (stop_reason: max_steps, 10 steps). "
+        "Its partial work, for you to judge:\n"
+        "What it did:\n" + DIGEST + "\n"
+        "Its own summary:\n" + SUMMARY
+    )
+
+
+def test_the_summary_block_is_omitted_when_the_child_has_none():
+    # None: the wrap-up call was disabled or failed. Blank: the model said nothing.
+    # Neither gets an empty "Its own summary:" a parent might read as "it had nothing
+    # to say".
+    for summary in (None, "", "  \n"):
+        text = SpawnAgent()._reply(_unfinished(summary=summary))
+        assert text == _header() + "\n" + DIGEST_LABEL + "\n" + DIGEST
+        assert SUMMARY_LABEL not in text
+
+
+def test_a_stuck_child_is_reported_under_its_own_stop_reason():
+    text = SpawnAgent()._reply(_unfinished(stop_reason="stuck", steps=4))
+
+    assert text.splitlines()[0] == _header("stuck", 4)
+    assert text.splitlines()[0] == (
+        "Sub-agent did not finish (stop_reason: stuck, 4 steps). "
+        "Its partial work, for you to judge:")
+
+
+def test_a_missing_digest_is_named_rather_than_left_blank():
+    # An Agent from before Week 4c records nothing about an unfinished run; the parent
+    # still sees a header and a labelled, explicit "nothing", not a dangling label.
+    text = SpawnAgent()._reply(_unfinished(digest=None, summary=None))
+
+    assert text == _header() + "\n" + DIGEST_LABEL + "\n" + NO_DIGEST
+
+
+def test_an_unfinished_child_is_an_error_result_with_the_header_first_end_to_end():
+    posts = []
+    done = []
+    bus = HookBus()
+    bus.on("post_tool_use", lambda call, result: posts.append((call.name, result.is_error)))
+    bus.on("on_spawn_done", lambda result, depth: done.append(result))
+
+    agent = _agent([_spawn(), _tool_turn(), _tool_turn(), _final("parent goes on")],
+                   spawn=SpawnAgent(child_max_steps=2), hooks=bus)
+    result = agent.run("go")
+
+    [msg] = _tool_messages(agent)
+    assert msg.is_error                                          # the flag: wire and auditors
+    assert msg.text.splitlines()[0] == _header("max_steps", 2)   # the words: for the model
+    assert DIGEST_LABEL in msg.text
+    assert not msg.text.startswith(REPLY_HEADER)                 # never the shape of an answer
+    assert not msg.text.startswith("Error:")                     # nor of a refusal
+    assert ("spawn_agent", True) in posts                        # the root's auditor saw a failure
+    assert done[0].stop_reason == "max_steps" and done[0].text is None
+    assert result.text == "parent goes on"                       # and the parent carried on
+    assert result.children == 1
+
+
+def test_a_finished_reply_is_never_flagged_as_an_error():
+    # The flag is for partial work only; the finished path is unchanged, byte for byte.
+    agent = _agent([_spawn(), _final("all good"), _final()])
+    agent.run("go")
+
+    [msg] = _tool_messages(agent)
+    assert msg.text == _reply("all good") and not msg.is_error
+
+
+def test_a_refusal_keeps_the_package_convention_of_an_error_line_without_the_flag():
+    # Other built-ins signal a refusal with an "Error:" first line and is_error False;
+    # this tool's refusals do the same. Only the unfinished result carries the flag.
+    agent = _agent([_spawn(tools=["teleport"]), _final()])
+    agent.run("go")
+
+    [msg] = _tool_messages(agent)
+    assert msg.text.startswith("Error: unknown tool(s) teleport") and not msg.is_error
+
+
+def test_a_forged_unfinished_header_inside_a_finished_reply_stays_behind_the_reply_header():
+    # A child that echoes the unfinished header cannot make its answer look like a
+    # failure (or the reverse): the harness's own first line comes first either way.
+    forged = _header("max_steps", 10) + "\nWhat it did:\nnothing"
+    agent = _agent([_spawn(), _final(forged), _final()])
+    agent.run("go")
+
+    [msg] = _tool_messages(agent)
+    assert msg.text.splitlines()[0] == REPLY_HEADER
+    assert not msg.is_error
+
+
+# --- Capping: the digest goes first, the header never --------------------------------------
+
+def test_a_long_digest_is_cut_first_and_the_header_and_summary_stay_whole():
+    tool = SpawnAgent(max_reply_chars=200)
+    text = tool._reply(_unfinished(digest="Q" * 1000, summary="short summary"))
+
+    assert text.splitlines()[0] == _header()                     # never cut
+    assert text.endswith(SUMMARY_LABEL + "\nshort summary")      # fit, so untouched
+    assert "[sub-agent digest truncated: " in text
+    # The digest got the room the summary left over — 200 - 13 = 187 chars, head and
+    # tail; the header, labels and the notice ride on top of the cap, as REPLY_HEADER
+    # and its notice do for a finished reply.
+    assert text.count("Q") == 187
+
+
+def test_a_rambling_summary_is_cut_too_but_only_past_half_the_room():
+    tool = SpawnAgent(max_reply_chars=200)
+    text = tool._reply(_unfinished(digest="Q" * 50, summary="Z" * 1000))
+
+    assert text.splitlines()[0] == _header()
+    assert text.count("Q") == 50                                 # the digest fit in what was left
+    assert "[sub-agent digest truncated" not in text
+    assert "[sub-agent summary truncated: " in text
+    assert text.count("Z") == 100                                # half the room, head and tail
+
+
+def test_the_digest_gets_the_whole_room_when_there_is_no_summary():
+    tool = SpawnAgent(max_reply_chars=200)
+    text = tool._reply(_unfinished(digest="Q" * 1000, summary=None))
+
+    assert text.count("Q") == 200
+    assert SUMMARY_LABEL not in text
+
+
+# --- The Week 4c settings a child inherits -------------------------------------------------
+
+class KnobbedAgent(Agent):
+    """An Agent with the Week 4c settings, whichever week the real one is from.
+
+    spawn.py builds children from its module-level `Agent`; substituting this class
+    tests the pass-through before the real Agent takes these arguments, and keeps
+    testing it afterwards (then the real __init__ sets them first and this one after).
+    """
+
+    built: list = []
+
+    def __init__(self, *args, max_repeats=3, wrap_up=True, context_window=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.max_repeats = max_repeats
+        self.wrap_up = wrap_up
+        self.context_window = context_window
+        KnobbedAgent.built.append(self)
+
+
+def test_only_settings_the_agent_takes_are_passed_and_only_the_contracts_three():
+    # Whatever week the real Agent is from, the child is built with names its
+    # constructor accepts — the tests above already prove a child gets built — and
+    # never with a fourth. The class to ask is the one spawn.py builds from.
+    parent = _agent([])
+    settings = _inherited_settings(parent)
+
+    assert set(settings) <= set(inspect.signature(spawn_module.Agent.__init__).parameters)
+    assert set(settings) <= set(INHERITED_SETTINGS)
+
+
+def test_a_child_inherits_the_parents_repeat_cap_wrap_up_and_context_window(monkeypatch):
+    monkeypatch.setattr(spawn_module, "Agent", KnobbedAgent)
+    KnobbedAgent.built.clear()
+    parent = KnobbedAgent(provider=ScriptedProvider([_spawn(), _final("ok"), _final()]),
+                          registry=ToolRegistry([mark, SpawnAgent()]),
+                          max_repeats=5, wrap_up=False, context_window=4096)
+    parent.run("go")
+
+    first, child = KnobbedAgent.built
+    assert first is parent
+    assert (child.max_repeats, child.wrap_up, child.context_window) == (5, False, 4096)
+    assert [m.text for m in _tool_messages(parent)] == [_reply("ok")]
+
+
+def test_a_parent_that_lacks_a_setting_yields_the_contracts_default(monkeypatch):
+    # The getattr fallback: an Agent that takes the settings, built from a parent that
+    # exposes none of them, still gets its child — with the contract's defaults, which
+    # are the Agent's own (3, True, None), rather than a crash.
+    monkeypatch.setattr(spawn_module, "Agent", KnobbedAgent)
+
+    class Bare:
+        """A parent that exposes nothing."""
+
+    assert _inherited_settings(Bare()) == INHERITED_SETTINGS
+    assert INHERITED_SETTINGS == {"max_repeats": 3, "wrap_up": True, "context_window": None}

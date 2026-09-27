@@ -240,6 +240,37 @@ def test_tool_calls_still_parse_alongside_usage():
     assert msg.usage == Usage(input_tokens=10, output_tokens=5)
 
 
+def test_synthesized_tool_call_ids_do_not_repeat_across_turns():
+    # Ollama sends no ids, so the provider makes them up. They used to restart at 0
+    # on every reply, so every turn's first call of a tool shared one id — and the
+    # digest, pairing results to calls by id, gave earlier calls the last outcome.
+    body = ollama_reply(
+        text="",
+        tool_calls=[{"function": {"name": "write_file", "arguments": {"path": "a.py"}}}],
+    )
+    body["message"]["tool_calls"] = body.pop("tool_calls")
+    provider = make_provider(lambda request: httpx.Response(200, json=body))
+
+    first = one_turn(provider).tool_calls[0].id
+    second = one_turn(provider).tool_calls[0].id
+
+    assert first == "call_0_write_file"          # the same first id as before, on a fresh provider
+    assert second == "call_1_write_file"
+    assert first != second
+
+
+def test_several_calls_in_one_reply_are_numbered_in_order():
+    body = ollama_reply(text="")
+    body["message"]["tool_calls"] = [
+        {"function": {"name": "read_file", "arguments": {"path": "a"}}},
+        {"function": {"name": "read_file", "arguments": {"path": "b"}}},
+    ]
+    provider = make_provider(lambda request: httpx.Response(200, json=body))
+
+    assert [c.id for c in one_turn(provider).tool_calls] == ["call_0_read_file", "call_1_read_file"]
+    assert [c.id for c in one_turn(provider).tool_calls] == ["call_2_read_file", "call_3_read_file"]
+
+
 # --- Ollama: retries ---------------------------------------------------------
 
 

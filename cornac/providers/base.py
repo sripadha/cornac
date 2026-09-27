@@ -19,6 +19,12 @@ from cornac.core.messages import Message
 
 
 class Provider(ABC):
+    # The model's context window in tokens, or None if the provider does not know
+    # (Week 4c). The agent loop uses it to decide when old tool results must be
+    # cleared to make room; a subclass sets it from its configuration (Ollama's
+    # num_ctx, a model's documented limit) or leaves it None to disable clearing.
+    context_window: int | None = None
+
     @abstractmethod
     def complete(self, messages: list[Message], tools: list[dict]) -> Message:
         """Run one model turn.
@@ -36,6 +42,26 @@ class Provider(ABC):
             `tool_calls` is populated; otherwise `text` holds the final answer.
         """
         ...
+
+    def complete_without_tools(self, messages: list[Message], tools: list[dict]) -> Message:
+        """Run one model turn in which the model may NOT call a tool (Week 4c).
+
+        The agent loop uses this for the wrap-up: a run that gave up is asked, once,
+        to account for itself, and that call must not be able to start another loop.
+
+        `tools` are the schemas the conversation was held with, NOT the tools to
+        offer. The default simply drops them and asks for a plain text turn, which
+        is what Ollama and the OpenAI-compatible servers accept: a history that
+        contains tool calls and tool results with no tool definitions attached is
+        fine with them. It is not fine with every backend. Anthropic's API rejects
+        a request whose messages carry tool_use/tool_result blocks unless `tools`
+        is defined ("Requests which include tool_use or tool_result blocks must
+        define tools"), so AnthropicProvider overrides this to keep sending the
+        definitions and forbid their use with tool_choice instead. The seam exists
+        so the loop can say "no tools this turn" without knowing which of those two
+        the backend needs.
+        """
+        return self.complete(messages, [])
 
     @property
     def name(self) -> str:

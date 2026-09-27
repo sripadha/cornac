@@ -30,9 +30,10 @@ class RunResult:
     # The model's final answer. None unless stop_reason == "done" — a run that hit
     # max_steps has no final answer, and we refuse to fake one.
     text: str | None
-    # Why the loop ended: "done" (the model stopped calling tools) or "max_steps"
-    # (the safety rail tripped). Distinct from Message.stop_reason, which is the
-    # *provider's* reason for ending one single generation.
+    # Why the loop ended: "done" (the model stopped calling tools), "max_steps" (the
+    # safety rail tripped) or "stuck" (the model repeated the identical tool call, for
+    # the identical result, max_repeats times; Week 4c). Distinct from Message.stop_reason,
+    # which is the *provider's* reason for ending one single generation.
     stop_reason: str
     steps: int        # number of provider.complete() calls this run made
     duration: float   # wall-clock seconds, start of run() to return
@@ -59,6 +60,18 @@ class RunResult:
     #                  cost end to end (see Agent.absorb_child).
     children: int = 0
     # --- end sub-agents ---
+    # --- unfinished runs (Week 4c) ---
+    # Both are None when stop_reason == "done". When the loop gave up (max_steps or
+    # stuck), the work is not thrown away: `digest` is a harness-written list of what
+    # happened (every tool call, whether it errored, the last error), built from the
+    # transcript with no model call, so it cannot embellish; `summary` is the model's
+    # own account, from one extra call with tools switched off ("what you did, what
+    # you found, what is still wrong, what you would do next"), or None if that call
+    # was disabled or failed. `text` stays None: neither is an answer, and a parent
+    # reading them must see an unfinished run, not a result.
+    digest: str | None = None
+    summary: str | None = None
+    # --- end unfinished runs ---
 
     def __str__(self) -> str:
         return self.text or ""

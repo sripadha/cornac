@@ -19,6 +19,10 @@ Quick start:
     print(result.text)            # or just print(result); str() gives the text
     print(result.stop_reason)     # "done", or "max_steps" if the loop gave up
     print(result.steps, result.usage.total_tokens)
+
+Or, from a terminal, without writing any code (Week 4c):
+
+    cornac "fix the failing test in tests/test_math.py"     # or: python -m cornac ...
 """
 
 from cornac.core.agent import Agent
@@ -27,6 +31,7 @@ from cornac.core.result import RunResult
 from cornac.hooks.bus import HookBus
 from cornac.permissions.policy import Decision, Policy
 from cornac.permissions.prompt import cli_ask
+from cornac.prompts import build_system_prompt
 from cornac.tools.base import Tool, tool
 from cornac.tools.registry import ToolRegistry
 
@@ -46,5 +51,6 @@ __all__ = [
     "Decision",
     "cli_ask",
     "HookBus",
+    "build_system_prompt",
     "__version__",
 ]
