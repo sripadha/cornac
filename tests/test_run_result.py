@@ -135,6 +135,15 @@ def test_usage_is_zero_when_no_response_reports_it():
     assert result.usage == Usage()
 
 
+def test_nudges_is_zero_for_a_run_that_never_stalled_and_defaults_to_zero():
+    # Week 4b added `nudges` as the last field, with a default, so a RunResult built
+    # the Week 4 way (five positional fields) still constructs. The nudge itself is
+    # tested in tests/test_nudge.py.
+    result = _agent(ScriptedProvider([_tool_turn(), _final()])).run("go")
+    assert result.nudges == 0
+    assert RunResult("t", "done", 1, 0.0, Usage()).nudges == 0
+
+
 def test_str_of_result_is_its_text():
     done = _agent(ScriptedProvider([_final("the answer")])).run("go")
     assert str(done) == done.text == "the answer"
@@ -253,3 +262,13 @@ def test_a_crashing_pre_tool_use_hook_vetoes_the_call(capsys):
     assert tool_msg.is_error and "Vetoed" in tool_msg.text
     assert "raised KeyError" in capsys.readouterr().err   # and the crash was reported
     assert result.text == "done"              # the loop itself never crashed
+
+
+def test_children_is_zero_for_a_run_that_never_delegated_and_defaults_to_zero():
+    # Week 4b-B added `children` after `nudges`, with a default, for the same reason:
+    # a RunResult built by hand — even one that gives nudges — still constructs.
+    # Delegation itself is tested in tests/test_spawn.py.
+    result = _agent(ScriptedProvider([_tool_turn(), _final()])).run("go")
+    assert result.children == 0
+    assert RunResult("t", "done", 1, 0.0, Usage()).children == 0
+    assert RunResult("t", "done", 1, 0.0, Usage(), 2).children == 0

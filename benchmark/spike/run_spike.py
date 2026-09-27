@@ -62,7 +62,11 @@ Round two (coding focus) added, on the lessons of round one:
   - announced_then_stopped, a HEURISTIC flag: the run ended with a final message that
     had no tool calls, the task did not pass, and the text says something like "let
     me fix it and re-run" — the failure mode that accounted for all four 7-8B swe
-    failures in round one. It is a phrase match, nothing more; see ANNOUNCE_RE.
+    failures in round one. It is a phrase match, nothing more. Since round three it
+    is the agent's own detector (cornac.core.agent.announces_next_step, which reads
+    the last line of the reply), so this column and the `nudges` column count the
+    same phrases; the runner used to keep a list of its own, with a bare "next"
+    that also flagged honest summaries.
   - Model tags may contain "/" and ":" (hf.co/unsloth/...:Q8_0). The raw tag is what
     goes to Ollama and into the table; only file names are sanitized (safe_name).
   - think=False goes to any tag whose lowercase name contains "qwen3" (qwen3, qwen3.5
@@ -85,6 +89,31 @@ Round two-b (a sampling check before freezing the model) added:
     without knowing this: round two's qwen3.5:4b failures were write_file payloads
     that stopped after the first function of a file the model had just read, which
     is what a presence penalty of 1.5 does to text already in the context.
+
+Round three (the harness under test, on the frozen model) changes the runner, not
+the tasks. Rounds two and two-b showed that most coding failures were the HARNESS's:
+whole-file write_file rewrites that dropped untouched functions or broke a closing
+triple-quote; a broken file discovered only by the next pytest and then re-sent
+unchanged; runs that ended by announcing the next step and never taking it; a system
+prompt that never said where the workspace was (one model ran `cd /workspace`); a
+function "fixed" inside run_python and believed to be on disk. Week 4b closes those
+gaps in cornac (edit_file, a syntax check after write_file, a nudge for a model that
+announces and stops, an honest write_file summary, Workspace.describe(), tool
+descriptions that say what run_bash/run_python do NOT do), and round three measures
+them: same tasks, same k, same frozen model. In the runner:
+
+  - The default --models is the frozen tag, qwen3.5:4b. The provider's own defaults
+    (presence_penalty 0, num_predict 2048, think off for the Qwen 3 family) are the
+    frozen ones now, so no --options override is needed; the `options` field of every
+    run line is the dict the provider actually sent (SpikeProvider.request_options).
+  - The spike policy allows edit_file next to write_file. The tool itself comes from
+    default_tools, like every other built-in.
+  - The per-run system prompt is SYSTEM_PROMPT plus Workspace.describe() for that
+    run's temp directory (system_prompt_for), so the model is told its absolute root.
+  - The Agent is built with its defaults for everything the spike does not need to
+    pin — max_nudges included — so a run measures the harness as shipped. The number
+    of nudges a run needed is on every run line (`nudges`; 0 for older lines that
+    predate the field) and in a "nudges" column of the table.
 """
 
 from __future__ import annotations
@@ -115,12 +144,14 @@ REPO_ROOT = SPIKE_DIR.parent.parent
 # imports below work from any cwd without an editable install.
 sys.path.insert(0, str(REPO_ROOT))
 
-from cornac import Agent, Message, Policy, ToolRegistry  # noqa: E402
+from cornac import Agent, Message, Policy, Tool, ToolRegistry  # noqa: E402
+from cornac.core.agent import announces_next_step  # noqa: E402
 from cornac.providers.ollama import OllamaProvider  # noqa: E402
 from cornac.tools.builtin import default_tools, get_current_time  # noqa: E402
 from cornac.tools.workspace import Workspace  # noqa: E402
 
-DEFAULT_MODELS = "qwen2.5:7b-instruct-q4_K_M,qwen3:8b,qwen3:4b"
+# The frozen benchmark model (round two-b); rounds one and two passed --models by hand.
+DEFAULT_MODELS = "qwen3.5:4b"
 DEFAULT_OUT = SPIKE_DIR / "results"
 # Table order: the benchmark's three domains, with the round-two coding tasks
 # right after the original swe task.
@@ -144,19 +175,25 @@ DEFAULT_SEED_BASE = 42
 DEFAULT_TEMPERATURE = 0.0
 REQUEST_TIMEOUT = 300  # seconds per model call; a 7B model on a laptop can need a while
 
+
+def system_prompt_for(workspace: Workspace) -> str:
+    """SYSTEM_PROMPT plus Workspace.describe(): the fixed text, then where THIS run lives.
+
+    Every run gets a fresh temp directory, so the paragraph naming the absolute root
+    has to be built per run. Round two had a model run `cd /workspace` (no such
+    directory) and round one had one run pytest on a guessed path; nothing had told
+    them where they were. The same paragraph goes to every model, so it is part of
+    the fixed conditions, not a per-model tweak.
+    """
+    return SYSTEM_PROMPT + "\n\n" + workspace.describe()
+
+
 # The tool-call probe: the smallest possible agent task, with one tool registered.
 # A model cannot know the wall-clock time from its weights, so the only way to answer
 # is to call the tool — and whether ANY tool call comes out is all the probe records.
 PROBE_PROMPT = "What is the current time in Tokyo? Use the tool."
 PROBE_SYSTEM_PROMPT = "You are a helpful assistant with tools. Call a tool when it helps."
 PROBE_MAX_STEPS = 3
-
-# The announced-then-stopped heuristic (see run_once). Round one's 7-8B swe failures
-# all ended the same way: a final message that said "let me fix it and re-run", and
-# then no tool call. This is a phrase match on the final text, no more: it flags
-# what the model SAID it would do, and cannot tell a stated plan from a stated
-# summary. It is labelled a heuristic wherever it is shown.
-ANNOUNCE_RE = re.compile(r"\b(let me|let['’]s|i will|i['’]ll|now i|next)\b", re.IGNORECASE)
 
 # One policy for every model. The spike is headless — nobody is there to answer an
 # ASK, and the agent turns an unanswered ASK into a DENY — so every tool a task can
@@ -169,6 +206,10 @@ POLICY_RULES: dict = {
     "tools": {
         "read_file": "allow",
         "write_file": "allow",
+        # Round three: the few-lines edit tool, next to the whole-file one. Round two's
+        # rewrites dropped functions and broke docstrings because write_file was the
+        # only way to change a file; whether edit_file gets used is what this measures.
+        "edit_file": "allow",
         "list_dir": "allow",
         "grep": "allow",
         "run_python": "allow",
@@ -182,6 +223,22 @@ POLICY_RULES: dict = {
     },
 }
 
+# --- sub-agents (Week 4b-B) ---------------------------------------------------
+# Built-ins the spike does NOT advertise. spawn_agent joined default_tools after the
+# model was frozen (commit c381aed measured qwen3.5:4b against the ten tools before
+# it), and POLICY_RULES would deny it anyway (default: deny, spawn_agent unlisted):
+# leaving it in would change the tool schema the frozen rounds saw and turn every
+# attempt to delegate into a wasted "Permission denied" step. Giving the spike
+# sub-agents is a deliberate change for a later round — drop the name here, allow
+# it in POLICY_RULES, and record the change in docs/observations.md.
+SPIKE_EXCLUDED_TOOLS = frozenset({"spawn_agent"})
+
+
+def spike_tools(workspace: Workspace) -> list[Tool]:
+    """The tools a spike run advertises: default_tools minus SPIKE_EXCLUDED_TOOLS."""
+    return [t for t in default_tools(workspace) if t.name not in SPIKE_EXCLUDED_TOOLS]
+# --- end sub-agents ------------------------------------------------------------
+
 
 # --- the provider tweak --------------------------------------------------------
 
@@ -191,23 +248,14 @@ POLICY_RULES: dict = {
 THINK_REJECTED: set[str] = set()
 
 
-def wants_think_off(model: str) -> bool:
-    """Whether `model` is a Qwen 3 family tag that should run with think=False.
+def runner_options(seed: int, temperature: float, extra: dict) -> dict:
+    """The spike's own generation settings, in merge order, with --options last.
 
-    Matched on the lowercase tag, anywhere in it, so it covers `qwen3:8b`,
-    `qwen3.5:4b`, `qwen3:4b-instruct-2507-q4_K_M` and an HF import such as
-    `hf.co/unsloth/Qwen3-4B-Instruct-2507-GGUF:Q8_0`.
-    """
-    return "qwen3" in model.lower()
-
-
-def request_options(seed: int, temperature: float, extra: dict) -> dict:
-    """The `options` dict of one request, in merge order: the runner's own, then --options.
-
-    This one function builds the request (SpikeProvider) AND fills the `options`
-    field of the runs.jsonl line (run_once), so the record and the request agree by
-    construction. `extra` comes last, so `--options '{"num_predict": 512}'` wins over
-    the runner's NUM_PREDICT — that is the point of the flag.
+    These go OVER the provider's defaults (SpikeProvider.request_options), so the
+    spike pins the same temperature, context window, seed and per-step output cap
+    for every model whatever the provider's defaults become. `extra` comes last, so
+    `--options '{"num_predict": 512}'` wins over NUM_PREDICT — that is the point of
+    the flag.
     """
     return {
         "temperature": temperature,
@@ -234,65 +282,61 @@ def parse_options(text: str | None) -> dict:
 
 
 class SpikeProvider(OllamaProvider):
-    """OllamaProvider with three per-request settings the spike needs.
+    """OllamaProvider with two spike-specific behaviors.
 
-    1. Qwen 3's thinking mode switched off. Qwen 3 models "think" by default: they
-       emit a long reasoning block before the answer, which costs tokens and time and
-       is a different mode of operation from what Qwen 2.5 does. Ollama (0.9+)
-       exposes a per-request `think` flag; sending think=False runs the model as a
-       plain instruct model, which is the fair comparison and the mode the plan
-       specifies. The flag is sent only for Qwen 3 family tags (wants_think_off): a
-       model without the thinking capability may reject it with a 400. When that
-       happens the tag is remembered (THINK_REJECTED), the flag dropped, and the
-       request re-sent once — the instruct-2507 tags and the GGUF imports are exactly
-       the ones whose templates may lack the capability, and one 400 must not become
-       k failed runs.
+    1. One `options` dict that is both sent and recorded. request_options() is the
+       provider's frozen defaults (presence_penalty 0 among them), then the runner's
+       own settings (runner_options), then the --options overrides last. Ollama
+       applies a request's options over the tag's Modelfile PARAMETER lines, so
+       --options is the one way to switch off a setting a tag bakes in (round two-b
+       did that for qwen3.5:4b's presence_penalty 1.5) without building a new tag.
+       The base provider calls this method to build every request, and run_once
+       calls it to fill the `options` field of the run line, so the record and the
+       request agree by construction.
 
-    2. A cap on output tokens per step, the same for every model. think=False is not
-       the whole story: with it, Ollama 0.30.9 returns no `thinking` field for
+       Why the runner re-states a cap the provider already has: think=False is not
+       the whole story. With it, Ollama 0.30.9 returns no `thinking` field for
        qwen3:4b, but the model still writes its chain of thought as ordinary
        `content` ("Okay, let's see..."). Measured: 1,918 output tokens before its
        first tool call in this runner, 5,689 in a direct probe, 56 s for a two-step
-       data run. Uncapped, one rambling step eats minutes, and at ~2k tokens a step a
-       7-12 step run blows through NUM_CTX, after which Ollama silently truncates the
-       prompt. The cap turns a runaway step into done_reason "length" on that
-       message: recorded (last_stop_reason), visible, and cheap. It is set for EVERY
-       model so the comparison stays fair; Qwen 2.5 never used more than 211 output
-       tokens in a step during the smoke test, so it never notices.
+       data run. Uncapped, one rambling step eats minutes, and at ~2k tokens a step
+       a 7-12 step run blows through NUM_CTX, after which Ollama silently truncates
+       the prompt. The cap turns a runaway step into done_reason "length" on that
+       message: recorded (last_stop_reason), visible, and cheap. It is pinned here
+       for EVERY model so the comparison stays fair even if the provider's default
+       moves; Qwen 2.5 never used more than 211 output tokens in a step during the
+       smoke test, so it never notices.
 
-    3. The --options overrides (extra_options), merged LAST into the request's
-       `options`, after the base provider's temperature/num_ctx/seed and the cap
-       above. Ollama applies a request's options over the tag's Modelfile PARAMETER
-       lines, so this is the one way to switch off a sampling setting a tag bakes
-       in (qwen3.5:4b's presence_penalty 1.5) without building a new tag. The same
-       dict goes to every model of the invocation.
+    2. A fallback for the `think` flag. The base provider sends think=False for any
+       tag whose lowercase name contains "qwen3" (qwen3, qwen3.5 and the unsloth
+       GGUFs), which runs the model as a plain instruct model — the fair comparison
+       and the mode the plan specifies. A tag whose template lacks the thinking
+       capability may reject the flag with a 400; the instruct-2507 tags and the
+       GGUF imports are exactly the ones that may. When that happens the tag is
+       remembered (THINK_REJECTED), the flag dropped, and the request re-sent once —
+       one 400 must not become k failed runs.
 
-    Overriding the HTTP step rather than complete() keeps every other part of the
-    payload identical.
+    Overriding request_options and the HTTP step keeps every other part of the
+    payload identical to what the shipped provider sends.
     """
 
-    def __init__(self, *args, extra_options: dict | None = None, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.extra_options = dict(extra_options or {})
+    def request_options(self) -> dict:
+        return {
+            **super().request_options(),
+            **runner_options(self.seed, self.temperature, self.extra_options),
+        }
 
     def _post_with_retries(self, url: str, payload: dict) -> dict:
-        send_think = wants_think_off(self.model) and self.model not in THINK_REJECTED
-        if send_think:
-            payload["think"] = False
-        # The base class set temperature/num_ctx/seed; request_options re-states them
-        # from the same attributes and adds num_predict and the --options overrides,
-        # so what goes out is exactly what run_once records.
-        payload["options"] = {
-            **payload.get("options", {}),
-            **request_options(self.seed, self.temperature, self.extra_options),
-        }
+        if self.model in THINK_REJECTED:
+            payload.pop("think", None)
         try:
             return super()._post_with_retries(url, payload)
         except httpx.HTTPStatusError as exc:
-            if send_think and exc.response.status_code == 400 and "think" in str(exc).lower():
+            rejected = exc.response.status_code == 400 and "think" in str(exc).lower()
+            if "think" in payload and rejected:
                 THINK_REJECTED.add(self.model)
                 print(
-                    f"[{self.model}] daemon rejected think=False ({exc}); "
+                    f"[{self.model}] daemon rejected think={payload['think']} ({exc}); "
                     "re-sending without the flag for this tag",
                     file=sys.stderr,
                     flush=True,
@@ -631,13 +675,15 @@ def announced_then_stopped(stop_reason: str | None, passed: bool, final_text: st
 
     `stop_reason == "done"` is the agent loop's word for "the final assistant message
     had no tool calls" (max_steps means the last message DID call a tool; error means
-    there was no final message). The phrase list is deliberately short and blunt;
-    "next" in particular also matches "the next step is" in an honest summary. It is
+    there was no final message). The phrase test is the agent's own nudge trigger,
+    announces_next_step, so the announced-then-stopped and nudges columns of the
+    table count the same thing and can be read together. Round one's 7-8B swe
+    failures all ended that way: "let me fix it and re-run", then no tool call. It is
     a flag to sort transcripts by, not a verdict.
     """
     if stop_reason != "done" or passed:
         return False
-    return bool(ANNOUNCE_RE.search(final_text or ""))
+    return announces_next_step(final_text)
 
 
 def run_once(
@@ -661,6 +707,9 @@ def run_once(
     # (Round one showed that at temperature 0 even different seeds collapse to the
     # same trajectory on these prompts; that is what --temperature is for.)
     seed = seed_base + run_index
+    # Built before the record, so the record's `options` is the dict this provider
+    # sends: its frozen defaults, then the runner's settings, then --options.
+    provider = make_provider(model, seed, temperature, extra_options)
 
     record: dict = {
         "model": model,
@@ -668,11 +717,11 @@ def run_once(
         "run": run_index,
         "seed": seed,
         "temperature": temperature,
-        # What the requests' `options` held (the runner's own, then --options on top)
-        # and the --options dict by itself, so a reader can tell an override from a
-        # default without diffing dicts. temperature/seed above are the flag values;
-        # if --options overrode either, `options` is the truth of what was sent.
-        "options": request_options(seed, temperature, extra_options),
+        # What the requests' `options` held and the --options dict by itself, so a
+        # reader can tell an override from a default without diffing dicts.
+        # temperature/seed above are the flag values; if --options overrode either,
+        # `options` is the truth of what was sent.
+        "options": provider.request_options(),
         "options_override": extra_options,
         "tool_capable": tool_capable,
         "passed": False,
@@ -689,6 +738,10 @@ def run_once(
         "tools_used": [],
         "answered_without_tools": False,
         "announced_then_stopped": False,
+        # How many times the agent had to nudge the model on ("you said you would
+        # do that; go on") before it acted. Stays 0 for a run that raised, and is
+        # absent from lines written before the field existed (read with .get).
+        "nudges": 0,
         "last_stop_reason": None,
         "context_overflow": False,
         "final_text": "",
@@ -701,17 +754,21 @@ def run_once(
     # __pycache__ is skipped in case someone ran pytest inside the fixture by hand.
     tmp = Path(tempfile.mkdtemp(prefix=f"spike-{task.name}-"))
     try:
-        workspace = tmp / "workspace"
+        workspace_dir = tmp / "workspace"
         shutil.copytree(
             task.fixture,
-            workspace,
+            workspace_dir,
             ignore=shutil.ignore_patterns("__pycache__", ".pytest_cache"),
         )
+        workspace = Workspace(workspace_dir)
 
+        # Only what the spike must pin is passed. Everything else — the nudge limit
+        # (max_nudges), hooks, the approver — is the Agent's own default, so a run
+        # measures the harness as shipped, not a spike-only configuration.
         agent = Agent(
-            provider=make_provider(model, seed, temperature, extra_options),
-            registry=ToolRegistry(default_tools(Workspace(workspace))),
-            system_prompt=SYSTEM_PROMPT,
+            provider=provider,
+            registry=ToolRegistry(spike_tools(workspace)),  # sub-agents (Week 4b-B)
+            system_prompt=system_prompt_for(workspace),
             max_steps=MAX_STEPS,
             policy=Policy(POLICY_RULES),
         )
@@ -751,6 +808,9 @@ def run_once(
                 "answered_without_tools": (
                     result.stop_reason == "done" and record["n_tool_calls"] == 0
                 ),
+                # getattr: the field is new in Week 4b, and a RunResult from an
+                # older harness must not crash the runner.
+                "nudges": getattr(result, "nudges", 0),
             }
         )
 
@@ -758,7 +818,7 @@ def run_once(
         # model that fixed the code but never got round to saying so still fixed the
         # code (the text-based verifiers fail it on their own, since text is None).
         try:
-            passed, reason = task.verify(str(workspace), result.text or "")
+            passed, reason = task.verify(str(workspace_dir), result.text or "")
         except Exception as exc:  # noqa: BLE001 — a verifier bug must show up as one
             passed, reason = False, f"verify.py crashed: {type(exc).__name__}: {exc}"
         record["passed"], record["verify_reason"] = bool(passed), reason
@@ -785,6 +845,8 @@ def format_line(r: dict) -> str:
         line += " CONTEXT-OVERFLOW"
     if r.get("announced_then_stopped"):
         line += " ANNOUNCED-THEN-STOPPED"
+    if r.get("nudges"):
+        line += f" nudges={r['nudges']}"
     if r.get("tool_capable") is False:
         line += " NO-TOOL-PROBE"
     if r["error"]:
@@ -867,7 +929,8 @@ def build_table(runs: list[dict], models_info: dict, task_names: list[str]) -> s
         + task_names
         + (["data via tool"] if show_data_via_tool else [])
         + ["overall", "tool-error rate", "no-tool answers", "announced-then-stopped",
-           "errors", "ctx overflow", "avg steps", "avg tokens", "avg secs", "GPU %"]
+           "nudges", "errors", "ctx overflow", "avg steps", "avg tokens", "avg secs",
+           "GPU %"]
     )
     lines = ["| " + " | ".join(header) + " |", "|" + "---|" * len(header)]
     warnings: list[str] = []
@@ -905,6 +968,8 @@ def build_table(runs: list[dict], models_info: dict, task_names: list[str]) -> s
         cells.append(_ratio(bad_calls, sum(r["n_tool_calls"] for r in mine)))
         cells.append(str(sum(r["answered_without_tools"] for r in mine)))
         cells.append(str(sum(1 for r in mine if r.get("announced_then_stopped"))))
+        # Nudges summed over the row's runs; lines older than the field count 0.
+        cells.append(str(sum(r.get("nudges", 0) for r in mine)))
         cells.append(str(sum(1 for r in mine if r["error"])))
         cells.append(str(sum(1 for r in mine if r.get("context_overflow"))))
         cells.append(f"{_mean([r['steps'] for r in mine]):.1f}")
@@ -1058,10 +1123,15 @@ tool raised (`n_tool_errors` in runs.jsonl), and soft errors, where the tool ran
 reported failure in its text, "Error: not a file" and the like (`n_soft_errors`);
 no-tool answers is runs where the model answered without calling any tool (a
 guess); announced-then-stopped is a HEURISTIC: runs that ended with a final message
-carrying no tool call, did not pass, and whose final text contains a phrase like
-"let me", "let's", "I will", "I'll", "now I" or "next" — the model announcing a next
-step and then ending its turn instead of taking it (a phrase match, so read the
-transcript before trusting any one count); errors is runs that died on a provider
+carrying no tool call, did not pass, and whose final text ends on a line that
+announces a step ("let me", "let's", "I will", "I'll", "I'm going to", "now I",
+"next step") — the model announcing a next step and then ending its turn instead of
+taking it (a phrase match, the agent's own nudge trigger, so read the transcript
+before trusting any one count); nudges is the total number of times the agent
+nudged the model on after such an announcement — the same phrase test, so the two
+columns can be read together (`nudges` on each run line, 0 on lines that predate the
+field; a run that passed after a nudge is a pass the harness bought); errors is
+runs that died on a provider
 error (an Ollama 500, a timeout; there are no retries, so one timeout is one error)
 and count as fails; ctx overflow is runs in which some call's prompt plus output
 reached num_ctx, so Ollama silently truncated the prompt and any failure after that

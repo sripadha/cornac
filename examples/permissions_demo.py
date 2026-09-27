@@ -54,8 +54,11 @@ def main() -> None:
     agent = Agent(
         provider=build_provider(which),
         registry=ToolRegistry(default_tools(workspace)),
+        # Workspace.describe() tells the model WHERE the sandbox is and that paths
+        # are relative to it; without it, models guess a cwd (spike round two).
         system_prompt=("You are a precise data assistant in a sandboxed workspace. "
-                       "Use run_python for any calculation; do not guess."),
+                       "Use run_python for any calculation; do not guess.\n\n"
+                       + workspace.describe()),
         max_steps=10,
         policy=policy,
         approver=cli_ask,   # <-- when policy says ASK, prompt the human

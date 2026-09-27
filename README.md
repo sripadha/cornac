@@ -10,9 +10,9 @@ retrieval, tools, and finally a dynamic agent loop). cornac is that scaffolding,
 from scratch so every layer is legible.
 
 > ⚠️ **Status: work in progress.** Built in the open as a learning project.
-> Weeks 1-3 are done (agent loop, 8 tools + workspace sandbox, permissions + hooks),
+> Weeks 1-3 are done (agent loop, 9 tools + workspace sandbox, permissions + hooks),
 > plus a hardening pass (gates that fail closed, timeouts that really stop a command,
-> head+tail output trimming, `RunResult`). Next up: sub-agents and the benchmark.
+> head+tail output trimming, `RunResult`), and sub-agents. Next up: the benchmark.
 
 ## Why "cornac"?
 
@@ -24,17 +24,30 @@ they *direct* a much larger force. That's exactly what a harness does to an LLM.
 - A provider-neutral conversation core (`Message` / `ToolCall` / `ToolResult`).
 - A `Provider` seam with **two** implementations — Anthropic (Claude) and Ollama
   (local models) — that the agent loop is completely blind to.
-- A tool system (`@tool` decorator + registry) with 8 built-in tools, confined to a
+- A tool system (`@tool` decorator + registry) with 11 built-in tools, confined to a
   `Workspace` sandbox. Long output is trimmed head+tail, so a traceback at the end
   of a flood of output still reaches the model. `run_python` echoes the value of a
   trailing bare expression, like a notebook cell, so a model that ends with `total`
-  instead of `print(total)` still sees its answer.
+  instead of `print(total)` still sees its answer. `edit_file` changes one snippet
+  in place instead of rewriting the whole file, and both it and `write_file` refuse
+  a `.py` that does not compile, leaving the file untouched, so the model hears
+  about a syntax slip now rather than from the next test run.
 - Permissions: every tool call passes an ALLOW / DENY / ASK policy (YAML or in-code)
   with an interactive approval prompt — and the gates fail closed.
 - Lifecycle hooks to observe the loop, including a `pre_tool_use` hook that can veto
   a call.
 - The agent loop itself, returning a `RunResult` (final text, stop reason, steps,
-  duration, token usage).
+  duration, token usage). Two small pieces of scaffolding the coding spike showed
+  were needed: a reply that only *announces* a step ("Let me fix that and re-run
+  the tests") and stops gets one nudge to act or answer, and a tool call repeated
+  with the identical result gets a note saying so.
+- Sub-agents: a `spawn_agent` tool hands a self-contained sub-task to a fresh child
+  agent (own empty context, a subset of the parent's tools, the *same* policy,
+  approver and `pre_tool_use` veto hooks, so delegation never escalates privilege)
+  and gets back only its final text, length-capped and framed as a sub-agent reply.
+  Depth and count are bounded, the child's tokens roll up into the parent's
+  `RunResult.usage`, and `on_spawn` / `on_spawn_done` hooks show the delegation
+  tree. See [examples/subagent_demo.py](examples/subagent_demo.py).
 
 Same agent, same tool, two brains:
 
@@ -108,8 +121,9 @@ The project is built as a **capability ladder** — each rung is a runnable demo
 | 4 | + Static workflow | planned |
 | 5 | + Dynamic harness (this package) | 🚧 in progress |
 
-**Tooling so far:** 8 built-in tools (`read_file`, `write_file`, `list_dir`, `grep`,
-`run_bash`, `run_python`, `web_search`, `web_fetch`) confined to a `Workspace` sandbox.
+**Tooling so far:** 11 built-in tools (`read_file`, `write_file`, `edit_file`, `list_dir`,
+`grep`, `run_bash`, `run_python`, `web_search`, `web_fetch`, `get_current_time`,
+`spawn_agent`) confined to a `Workspace` sandbox.
 The agent chains them across loop iterations and recovers from its own errors — see
 [examples/multistep_trace.py](examples/multistep_trace.py) and
 [docs/breakdown/tools-and-workspace.md](docs/breakdown/tools-and-workspace.md).
@@ -124,7 +138,7 @@ veto: gatekeepers fail closed). See
 [examples/hook_trace.py](examples/hook_trace.py), and
 [docs/breakdown/permissions-and-hooks.md](docs/breakdown/permissions-and-hooks.md).
 
-Then: sub-agents, and a 15-task benchmark showing the success-rate climb across the
+Then: a 15-task benchmark showing the success-rate climb across the
 ladder — all on the same weak model.
 
 See [docs/plan.md](docs/plan.md) for the full design.

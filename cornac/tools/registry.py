@@ -27,6 +27,19 @@ class ToolRegistry:
     def get(self, name: str) -> Tool | None:
         return self._tools.get(name)
 
+    # --- sub-agents (Week 4b-B) --------------------------------------------------
+    # spawn_agent builds a child registry from a subset of its parent's tools, and
+    # the agent introduces itself to every tool that wants it (see Agent.__init__).
+    # Both need to walk the registry; these keep them from reaching into _tools.
+    def names(self) -> list[str]:
+        """Tool names in registration order — the order the model sees them in."""
+        return list(self._tools)
+
+    def tools(self) -> list[Tool]:
+        """The Tool objects themselves, in registration order."""
+        return list(self._tools.values())
+    # --- end sub-agents ------------------------------------------------------------
+
     def schemas(self) -> list[dict]:
         """Neutral tool descriptions for the provider to serialize.
 

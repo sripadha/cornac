@@ -18,10 +18,30 @@ registration order.
 Events fired by the agent (see core/agent.py):
     on_user_message(message)
     on_assistant_message(message)
+    on_nudge(text, n)                     -> the model described a step and stopped
+                                             (text); the loop is sending nudge number n
+                                             (Week 4b). The nudge is a harness message,
+                                             not the user's, so it does not also fire
+                                             on_user_message.
     pre_tool_use(call)                    -> return Decision.DENY to veto the call
     on_permission_decision(call, decision)
     post_tool_use(call, result)
     on_stop(final_text)                   -> final_text is None if max_steps was hit
+
+Fired by the spawn_agent tool on the parent's bus (Week 4b-B; see
+tools/builtin/spawn.py):
+    on_spawn(task, depth)                 -> a sub-agent is about to run
+    on_spawn_done(result, depth)          -> it returned; result is its RunResult, or
+                                             None if it raised
+
+A sub-agent runs on a bus of its own, and what reaches the parent's bus from it is
+decided by what the event is about. The tool-call events — pre_tool_use,
+on_permission_decision, post_tool_use — are forwarded, so a veto or an auditor
+registered on the root agent applies to, and sees, every tool call in the whole
+delegation tree; pre_tool_use is forwarded as a gate, so a DENY (or a crash) on the
+parent's bus vetoes the child's call too. The conversation events — on_user_message,
+on_assistant_message, on_nudge, on_stop — are not forwarded: they describe one
+agent's own dialogue, and a child's on_stop is not the parent's.
 
 Two rules govern a callback that raises:
 

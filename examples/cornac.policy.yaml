@@ -24,6 +24,7 @@ tools:
 
   # mutating -> ask first
   write_file: ask
+  edit_file: ask
 
   # arbitrary code -> deny the obviously destructive, ask about the rest
   run_bash:

@@ -11,6 +11,25 @@ search the web, spawn a sub-agent. Every tool exposes the same four things:
 
 Providers serialize (name, description, input_schema) into whatever tool format
 their API expects. The harness calls run() after permission checks pass.
+
+Two OPTIONAL methods let a tool talk to the agent that holds it (Week 4b-B). Both are
+duck-typed — the agent only checks hasattr(), so the loop stays blind to specific
+tools — and a tool that has neither is a plain capability, the same for whichever
+agent calls it:
+
+  - bind_parent(agent) : called once by Agent.__init__ on every tool in its registry,
+                         for a tool that needs its agent. spawn_agent builds children
+                         from the parent's provider, policy and approver, and refuses
+                         to be rebound to a different agent.
+  - reset_for_run()    : called by Agent.run() at the start of every run, for a tool
+                         that keeps per-run state (spawn_agent's child budget).
+
+A tool that implements either is that agent's STATE, not a capability, and stays with
+it: spawn_agent never hands one to a sub-agent by reference. The child would bind and
+reset it again — and refusing the rebind (the right thing for bind_parent to do) would
+break every spawn, while resetting per-run state mid-run would let a child wipe its
+parent's count. The child gets a spawn_agent of its own instead, and nothing else of
+that kind; asking for one by name is refused (see tools/builtin/spawn.py, Binding).
 """
 
 from __future__ import annotations

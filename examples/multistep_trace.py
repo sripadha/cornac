@@ -72,10 +72,13 @@ def main() -> None:
     agent = Agent(
         provider=build_provider(which),
         registry=ToolRegistry(default_tools(workspace)),
+        # Workspace.describe() tells the model WHERE the sandbox is and that paths
+        # are relative to it; without it, models guess a cwd (spike round two).
         system_prompt=(
             "You are a precise data assistant working inside a sandboxed workspace. "
             "Explore files with list_dir/read_file, and use run_python for any "
-            "calculation. Do not guess numbers — compute them."
+            "calculation. Do not guess numbers — compute them.\n\n"
+            + workspace.describe()
         ),
         max_steps=10,
     )

@@ -99,6 +99,7 @@ DEFAULT_RULES: dict = {
         "web_search": "allow",
         "web_fetch": "allow",
         "write_file": "ask",
+        "edit_file": "ask",
         "run_bash": {
             "deny": ["rm -rf", "sudo", "mkfs", ":(){", "dd if="],
             "default": "ask",

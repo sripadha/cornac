@@ -13,6 +13,13 @@ The *real* safety gate for run_bash is the Week 3 permission system (this tool w
 default to "ask"). Until then, treat it as trusted-local-use only. We deliberately do
 NOT try to sanitize the command string here — partial blocklists give false confidence;
 the honest control is permission prompts plus the workspace cwd.
+
+Two sentences of the description exist because of the model spike's transcripts
+(benchmark/spike/): models guessed a cwd (`cd /workspace`, no such directory) because
+nothing said the command already starts in the workspace, and one model "fixed" a
+function inside a run_python snippet and believed the file on disk had changed. So
+the description says where the command runs and that running code does not edit
+files — edit_file (a few lines) or write_file (the whole file) does.
 """
 
 from __future__ import annotations
@@ -36,8 +43,11 @@ TAIL_CHARS = 10_000   # chars kept from the end
 class RunBash(Tool):
     name = "run_bash"
     description = (
-        "Run a bash command from the workspace root and return its combined "
-        "stdout/stderr and exit code. Use for running tests, git, build tools, etc."
+        "Run a bash command in the workspace root and return its combined "
+        "stdout/stderr and exit code. Use for running tests, git, build tools, etc. "
+        "The command already starts in the workspace (no cd needed). Running a "
+        "command does NOT edit source files: to change a file use edit_file (a few "
+        "lines) or write_file (the whole file)."
     )
     input_schema = {
         "type": "object",

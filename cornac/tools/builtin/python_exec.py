@@ -22,6 +22,12 @@ reasons: a crash or infinite loop can't take down the agent, and a timeout can k
 This is NOT a security sandbox — a determined snippet can still read files the user can
 read. Real isolation (containers, seccomp) is out of scope for v1; the honest controls
 are the permission prompt, the subprocess timeout, and the workspace cwd.
+
+The description spells out that a snippet runs in the workspace and does not edit
+files. In the model spike (benchmark/spike/) one model redefined the buggy function
+inside a run_python snippet, saw its own test pass, and reported the file fixed — the
+file on disk was untouched. A snippet is a scratch cell; edit_file (a few lines) or
+write_file (the whole file) is how a file changes, and the description says so.
 """
 
 from __future__ import annotations
@@ -48,10 +54,13 @@ TAIL_CHARS = 10_000
 class RunPython(Tool):
     name = "run_python"
     description = (
-        "Run a Python 3 code snippet from the workspace root and return whatever it "
+        "Run a Python 3 code snippet in the workspace root and return whatever it "
         "prints to stdout (and any error). Import what you need; print your results. "
         "The value of a final bare expression is printed too, like a notebook cell. "
-        "A non-zero exit status is reported as '(exit code N)'."
+        "A non-zero exit status is reported as '(exit code N)'. The snippet already "
+        "runs in the workspace (no cd needed) and does NOT edit source files: a "
+        "function redefined here lives only in the snippet. To change a file use "
+        "edit_file (a few lines) or write_file (the whole file)."
     )
     input_schema = {
         "type": "object",
