@@ -103,14 +103,138 @@ The security model is one line, repeated in all four: **the first thing `run()` 
 fifth file tool tomorrow — as long as its first line is `resolve()`, it's automatically
 sandboxed. The fence is defined once, reused everywhere.
 
-Per-tool notes:
-- **read_file** — resolve → check it's a file → read → cap at `MAX_BYTES` (files feed into
-  the model's limited context, so huge files are truncated).
-- **write_file** — resolve → `mkdir(parents=True)` to create missing folders → write. Safe
-  to expose because resolve already guaranteed the path is inside the sandbox.
-- **list_dir** — `path` optional (defaults to `.`); sorts dirs first, marks them with `/`.
-- **grep** — `root.rglob("*")` walks every file recursively; skips binary/unreadable files
-  (`try/except UnicodeDecodeError`); reports matches as `path:line_number:line`.
+### `read_file` — the template, line by line
+
+```python
+def run(self, arguments):
+    path = self.ws.resolve(arguments["path"])              # 1. THE GATE
+    if not path.is_file():                                 # 2. sanity check
+        return f"Error: not a file: {self.ws.relative(path)}"
+    data = path.read_text(encoding="utf-8", errors="replace")   # 3. the read
+    if len(data) > MAX_BYTES:                              # 4. don't flood context
+        return data[:MAX_BYTES] + f"\n... [truncated at {MAX_BYTES} chars]"
+    return data
+```
+
+1. **The gate.** `arguments["path"]` is the model's string (e.g. `"README.md"`). `resolve()`
+   turns it into a safe absolute path inside the sandbox, or raises. Everything below this
+   line is guaranteed in-sandbox.
+2. **Sanity check.** `path.is_file()` — did the model point at a real file (not a folder or
+   a missing path)? If not, return a *readable error string*, not a crash.
+3. **The read.** `read_text(errors="replace")` reads the file. `errors="replace"` means "if
+   you hit a byte you can't decode as UTF-8, substitute a placeholder instead of raising" —
+   robustness against messy real-world files.
+4. **Context protection.** `MAX_BYTES = 100_000`. The result goes back into the conversation,
+   which costs tokens and can overflow the model's context window. So a huge file is
+   truncated with a note. **General agent-design rule: tool output lands in the model's
+   context, so tools must never return unbounded data.**
+
+> **Why `resolve()` comes *before* `is_file()` (the order is not arbitrary):** `resolve()`
+> does two jobs — it's the security gate *and* it produces the correct absolute `Path`.
+> `is_file()` depends on both. If you checked `is_file()` first, (a) you'd be touching the
+> filesystem with an *unvalidated* path — statting `is_file()` on `/etc/shadow` reveals
+> whether it exists before the fence ever rejects it; and (b) you'd check the wrong
+> *location* — the raw relative string `"README.md"` would be resolved against the process's
+> working directory, not the workspace root. **Validate first, then act. Never touch the
+> filesystem with a path you haven't run through the gate.**
+
+### `write_file` — same skeleton, two differences
+
+Its schema needs **two** required args — `path` *and* `content`. And its `run` writes:
+
+```python
+path = self.ws.resolve(arguments["path"])          # same gate, first thing
+path.parent.mkdir(parents=True, exist_ok=True)     # NEW: create missing folders
+path.write_text(arguments["content"], encoding="utf-8")
+return f"Wrote {len(content)} chars to {self.ws.relative(path)}"
+```
+
+- `path.parent.mkdir(parents=True, exist_ok=True)` — if the model writes `"notes/todo.txt"`
+  but `notes/` doesn't exist, plain `write_text` would fail. This creates it first.
+  `parents=True` = create any missing parent folders (like `mkdir -p`); `exist_ok=True` =
+  don't complain if it already exists.
+- It returns a **confirmation** (`"Wrote 42 chars to notes/todo.txt"`), not the content — the
+  model needs to know the write *succeeded*.
+- Safe to expose *because* `resolve()` already guaranteed the path is inside the sandbox.
+
+### `list_dir` — the sorting trick
+
+Its schema has **no `required`** — `path` is optional, defaulting to the root.
+
+```python
+path = self.ws.resolve(arguments.get("path", "."))          # .get with default "."
+if not path.is_dir():
+    return f"Error: not a directory: {self.ws.relative(path)}"
+entries = sorted(path.iterdir(), key=lambda p: (p.is_file(), p.name))   # the trick
+return "\n".join(e.name + ("/" if e.is_dir() else "") for e in entries)
+```
+
+- `arguments.get("path", ".")` — since `path` is optional, `.get` returns `"."` (the root)
+  if the model didn't send one, instead of crashing on a missing key.
+- **The sort trick:** `key=lambda p: (p.is_file(), p.name)`. `p.is_file()` is `False` (which
+  Python treats as `0`) for directories and `True` (`1`) for files. Sorting by that tuple
+  puts **all folders first (0), then all files (1)**, each group alphabetical by name. The
+  `lambda` is just an inline "here's how to rank each item" rule.
+- The output appends `/` to directory names so the model can tell folders from files at a
+  glance: `cornac/`, `docs/`, then `README.md`.
+
+### `grep` — the most involved (but same skeleton)
+
+```python
+root = self.ws.resolve(arguments.get("path", "."))     # gate, first thing
+regex = re.compile(arguments["pattern"])               # compile the search pattern
+hits = []
+for file in sorted(root.rglob("*")):                   # walk EVERY file, recursively
+    if not file.is_file():
+        continue
+    try:
+        text = file.read_text(encoding="utf-8", errors="strict")
+    except (UnicodeDecodeError, OSError):
+        continue                                       # skip binary / unreadable files
+    for lineno, line in enumerate(text.splitlines(), start=1):   # number lines from 1
+        if regex.search(line):                         # does this line match?
+            hits.append(f"{self.ws.relative(file)}:{lineno}:{line.strip()}")
+            if len("\n".join(hits)) > MAX_BYTES:       # too many matches -> stop early
+                hits.append("... [truncated: too many matches]")
+                return "\n".join(hits)
+return "\n".join(hits) if hits else f"(no matches for {arguments['pattern']!r})"
+```
+
+- `re.compile(pattern)` — `re` is Python's regular-expression module (a mini-language for
+  "find text matching this shape"). The model supplies a pattern like `def add`.
+- `root.rglob("*")` — the **r** is *recursive* glob: visit every file under the folder at any
+  depth. (This is why grepping with root `.` dives into `.venv/` — `rglob` visits
+  *everything*, so a broad root surfaces library files too.)
+- `try/except (UnicodeDecodeError, OSError)` — `errors="strict"` means "raise if this isn't
+  valid UTF-8," and we catch that to **skip binary files** (images, `.pyc`) rather than grep
+  through a JPEG.
+- `enumerate(text.splitlines(), start=1)` — split into lines and number them from 1, so we
+  can report `path:line_number:line`.
+- `regex.search(line)` — does the line contain the pattern? If yes, record a hit.
+- The `MAX_BYTES` guard — same context-protection idea as `read_file`, but for match
+  *count*: a pattern matching thousands of lines shouldn't dump megabytes into context.
+- The final line returns a clear `(no matches for '...')` instead of an empty string — a
+  definite "nothing found" beats ambiguous silence.
+
+### The unifying picture
+
+```
+   ┌─ read_file  ─┐
+   ├─ write_file ─┤   each one:  run(arguments)
+   ├─ list_dir   ─┤      │
+   └─ grep       ─┘      ├─► 1. self.ws.resolve(path)   ← THE GATE (same for all 4)
+                        │        escape? → WorkspaceError → registry → error result
+                        └─► 2. its own operation on the now-safe path:
+                                 read_file  → read_text
+                                 write_file → mkdir + write_text
+                                 list_dir   → iterdir + sort
+                                 grep       → rglob + regex search
+```
+
+Every file tool is **"pass the path through the gate, then do one file operation."** And
+every one shares two habits: **failures become readable strings** (not a file? can't decode?
+→ a message, never a crash) and **output is capped** (`MAX_BYTES`) so it never floods the
+model's context. That discipline is what makes them safe to hand to an autonomous model.
 
 **Proven live:** all four work inside the sandbox, and all four reject the same escape
 attempts identically (`is_error=True, "...escapes the workspace root"`) — without crashing.
@@ -138,6 +262,9 @@ subprocess.run([sys.executable, "-c", code], cwd=self.ws.root, ...)
   see the same installed libraries (which is why a model's `import pandas` failed — pandas
   isn't in this venv).
 - `cwd=self.ws.root` — the command *starts* inside the sandbox.
+- `capture_output=True, text=True` — grab the program's stdout/stderr (instead of letting
+  it print to *our* terminal) and hand it back as strings, not raw bytes — so the output can
+  become a `ToolResult` fed to the model.
 - `timeout` — kill a hanging command; return a readable timeout error instead of freezing.
 - subprocess (not in-process `exec`) — a crash or infinite loop is contained to the child;
   cornac keeps running.

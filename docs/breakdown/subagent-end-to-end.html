@@ -1,0 +1,775 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>cornac · One Delegated Fix, Step by Step</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%231c1917'/%3E%3Crect x='12' y='14' width='40' height='14' rx='4' fill='none' stroke='%2338bdf8' stroke-width='4'/%3E%3Crect x='24' y='36' width='28' height='14' rx='4' fill='none' stroke='%234ade80' stroke-width='4'/%3E%3Cpath d='M20 28v12h4' fill='none' stroke='%23fbbf24' stroke-width='4' stroke-linecap='round'/%3E%3C/svg%3E">
+<!--
+  Built with the visual-explainer skill conventions:
+  - IBM Plex Sans + IBM Plex Mono (IDE-inspired: the subject is a running program)
+  - amber + emerald + blue accents on a warm stone ground; light and dark themes
+  - Mermaid sequence diagram inside the canonical .diagram-shell with zoom/pan/expand
+  - Then an interactive stepper: one moment at a time, with two live "memory" panels
+  Every number, argument and message comes from one captured run of the frozen model.
+-->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  /* ============ THEME ============ */
+  :root {
+    color-scheme: dark;
+    --font-body: 'IBM Plex Sans', system-ui, sans-serif;
+    --font-mono: 'IBM Plex Mono', 'SF Mono', Consolas, monospace;
+
+    /* dark is the default; the toggle switches to light */
+    --bg: #1c1917;
+    --surface: #292524;
+    --surface-2: #231f1c;
+    --border: rgba(231, 229, 228, 0.10);
+    --text: #e7e5e4;
+    --text-dim: #a8a29e;
+    --primary: #fbbf24; --primary-dim: rgba(251, 191, 36, 0.14);   /* amber: the harness */
+    --parent: #7dd3fc;  --parent-dim: rgba(125, 211, 252, 0.14);   /* blue: the parent agent */
+    --child: #86efac;   --child-dim: rgba(134, 239, 172, 0.14);    /* emerald: the child agent */
+    --danger: #fca5a5;  --danger-dim: rgba(252, 165, 165, 0.14);
+    --code-bg: #0f0d0c; --code-text: #e7e5e4; --code-c: #a8a29e; --code-k: #fbbf24; --code-s: #7dd3fc; --code-n: #86efac;
+  }
+  :root[data-theme="light"] {
+    color-scheme: light;
+    --bg: #faf8f5;
+    --surface: #ffffff;
+    --surface-2: #f1ede6;
+    --border: rgba(28, 25, 23, 0.10);
+    --text: #1c1917;
+    --text-dim: #6b6560;
+    --primary: #b45309; --primary-dim: rgba(180, 83, 9, 0.10);
+    --parent: #0369a1;  --parent-dim: rgba(3, 105, 161, 0.10);
+    --child: #15803d;   --child-dim: rgba(21, 128, 61, 0.10);
+    --danger: #b91c1c;  --danger-dim: rgba(185, 28, 28, 0.10);
+    --code-bg: #1c1917;
+  }
+
+  /* ============ RESET + BASE ============ */
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    background-color: var(--bg);
+    background-image: radial-gradient(circle, var(--border) 1px, transparent 1px);
+    background-size: 24px 24px;
+    color: var(--text);
+    font-family: var(--font-body);
+    font-size: 16px;
+    line-height: 1.6;
+    padding: 28px 24px 48px;
+    min-height: 100vh;
+  }
+  .container { max-width: 1180px; margin: 0 auto; }
+  code { font-family: var(--font-mono); font-size: 0.88em; background: var(--primary-dim); color: var(--primary); padding: 1px 5px; border-radius: 3px; overflow-wrap: anywhere; }
+
+  @keyframes fadeUp { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
+  .animate { animation: fadeUp 0.4s ease-out both; animation-delay: calc(var(--i, 0) * 0.06s); }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: 0.01ms !important; animation-delay: 0ms !important; transition-duration: 0.01ms !important; }
+  }
+
+  /* ============ HEADER ============ */
+  .eyebrow { font-family: var(--font-mono); font-size: 12px; letter-spacing: .14em; text-transform: uppercase; color: var(--primary); margin-bottom: 8px; }
+  h1 { font-size: 38px; font-weight: 700; letter-spacing: -1px; line-height: 1.1; margin-bottom: 10px; text-wrap: balance; }
+  .description { font-size: 15px; line-height: 1.7; color: var(--text-dim); max-width: 720px; margin-bottom: 28px; }
+  .description strong { color: var(--text); }
+
+  h2 { font-size: 22px; font-weight: 700; letter-spacing: -.3px; margin: 40px 0 6px; text-wrap: balance; }
+  .section-hint { font-family: var(--font-mono); font-size: 12px; color: var(--text-dim); margin-bottom: 14px; }
+
+  /* ============ MERMAID (canonical diagram-shell) ============ */
+  .diagram-shell { position: relative; }
+  .diagram-shell__hint { font-family: var(--font-mono); font-size: 11px; color: var(--text-dim); margin-bottom: 8px; opacity: .8; }
+  .mermaid-wrap { position: relative; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 24px 20px; overflow: auto; margin-bottom: 14px; display: flex; justify-content: center; align-items: center; min-height: 360px; cursor: grab; }
+  .mermaid-wrap.is-panning { cursor: grabbing; user-select: none; }
+  .zoom-controls { position: absolute; top: 8px; right: 8px; display: flex; gap: 2px; z-index: 10; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 2px; }
+  .zoom-controls button { width: 28px; height: 28px; border: none; background: transparent; color: var(--text-dim); font-family: var(--font-mono); font-size: 14px; cursor: pointer; border-radius: 4px; display: flex; align-items: center; justify-content: center; transition: background .15s, color .15s; }
+  .zoom-controls button:hover { background: var(--border); color: var(--text); }
+  .zoom-label { font-family: var(--font-mono); font-size: 10px; color: var(--text-dim); padding: 0 6px; white-space: nowrap; align-self: center; }
+  .mermaid-viewport { position: relative; overflow: hidden; width: 100%; height: 100%; min-height: 300px; }
+  .mermaid-canvas { position: absolute; top: 0; left: 0; }
+  .mermaid .messageText, .mermaid .actor, .mermaid .noteText, .mermaid text { font-family: var(--font-body) !important; }
+  .mermaid .messageText { font-size: 13px !important; }
+  .legend { display: flex; gap: 20px; flex-wrap: wrap; margin-bottom: 8px; }
+  .legend-item { display: flex; align-items: center; gap: 6px; font-family: var(--font-mono); font-size: 11px; color: var(--text-dim); }
+  .legend-swatch { width: 12px; height: 12px; border-radius: 3px; }
+
+  /* ============ STEPPER ============ */
+  .stage { display: grid; grid-template-columns: 210px minmax(0, 1fr) 330px; gap: 18px; align-items: start; }
+  @media (max-width: 1000px) { .stage { grid-template-columns: 1fr; } }
+
+  .rail { background: var(--surface-2); border: 1px solid var(--border); border-radius: 12px; padding: 10px 8px; position: sticky; top: 12px; }
+  @media (max-width: 1000px) { .rail { position: static; display: flex; gap: 6px; overflow-x: auto; padding: 8px; } }
+  .rail .grp { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: .12em; text-transform: uppercase; color: var(--text-dim); padding: 10px 8px 2px; }
+  @media (max-width: 1000px) { .rail .grp { display: none; } }
+  .rail button { display: block; width: 100%; text-align: left; background: none; border: 0; border-left: 3px solid transparent; color: var(--text-dim); font: inherit; font-size: 13px; padding: 6px 8px; border-radius: 6px; cursor: pointer; white-space: nowrap; }
+  @media (max-width: 1000px) { .rail button { width: auto; border-left: 0; border-bottom: 3px solid transparent; } }
+  .rail button.on { color: var(--text); font-weight: 600; border-left-color: var(--primary); background: var(--surface); }
+  @media (max-width: 1000px) { .rail button.on { border-bottom-color: var(--primary); } }
+  .rail button.done { opacity: .6; }
+  .rail button:focus-visible, .nav button:focus-visible, .zoom-controls button:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 20px 22px; min-height: 0; min-width: 0; max-height: calc(100vh - 90px); overflow: auto; }
+  .who { display: inline-block; font-family: var(--font-mono); font-size: 11px; font-weight: 500; letter-spacing: .1em; text-transform: uppercase; padding: 3px 9px; border-radius: 999px; border: 1px solid; }
+  .who.parent { color: var(--parent); background: var(--parent-dim); border-color: var(--parent); }
+  .who.child { color: var(--child); background: var(--child-dim); border-color: var(--child); }
+  .who.harness { color: var(--primary); background: var(--primary-dim); border-color: var(--primary); }
+  .who.setup { color: var(--text-dim); background: var(--surface-2); border-color: var(--border); }
+  .card h3 { font-size: 21px; font-weight: 700; letter-spacing: -.3px; margin: 10px 0 6px; text-wrap: balance; }
+  .card h3 .n { color: var(--primary); font-family: var(--font-mono); font-weight: 500; font-size: 15px; letter-spacing: 0; }
+  .card p, .card li { max-width: 70ch; }
+  .card p.say { color: var(--text-dim); margin: 6px 0; }
+  .card p.say strong { color: var(--text); }
+  .card ol { padding-left: 22px; color: var(--text-dim); }
+  .card ol li { margin: 6px 0; }
+  .card ol li strong { color: var(--text); }
+  .facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; margin: 14px 0; }
+  .fact { background: var(--surface-2); border: 1px solid var(--border); border-radius: 9px; padding: 8px 10px; min-width: 0; }
+  .fact .k { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--text-dim); }
+  .fact .v { font-family: var(--font-mono); font-size: 13px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+  .pre-label { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--text-dim); margin: 14px 0 6px; }
+  pre { background: var(--code-bg); color: var(--code-text); border-radius: 11px; padding: 12px 14px; overflow: auto; max-height: 34vh; margin: 0 0 12px; font-family: var(--font-mono); font-size: 12px; line-height: 1.5; border: 1px solid rgba(255,255,255,.06); }
+  pre .c { color: var(--code-c); } pre .k { color: var(--code-k); } pre .s { color: var(--code-s); } pre .n { color: var(--code-n); }
+  .callout { border-left: 3px solid var(--primary); background: var(--primary-dim); padding: 10px 14px; border-radius: 0 9px 9px 0; margin: 12px 0; max-width: 70ch; font-size: 14px; }
+  .callout.deny { border-left-color: var(--danger); background: var(--danger-dim); }
+  .callout.ok { border-left-color: var(--child); background: var(--child-dim); }
+  .nav { display: flex; gap: 10px; align-items: center; justify-content: space-between; margin-top: 18px; flex-wrap: wrap; }
+  .nav button { font: inherit; font-weight: 600; font-size: 14px; padding: 9px 16px; border-radius: 9px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text); cursor: pointer; }
+  .nav button.primary { background: var(--primary); color: #fff; border-color: var(--primary); }
+  .nav button.primary { color: #1c1917; }
+  :root[data-theme="light"] .nav button.primary { color: #fff; }
+  .nav button:disabled { opacity: .4; cursor: default; }
+  .nav .pos { font-family: var(--font-mono); color: var(--text-dim); font-size: 12px; font-variant-numeric: tabular-nums; }
+
+  /* memory panels */
+  .mem { display: flex; flex-direction: column; gap: 14px; position: sticky; top: 12px; min-width: 0; }
+  @media (max-width: 1000px) { .mem { position: static; } }
+  .box { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+  .box .hd { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; padding: 9px 12px; border-bottom: 1px solid var(--border); font-family: var(--font-mono); font-size: 11px; letter-spacing: .1em; text-transform: uppercase; font-weight: 600; }
+  .box.parent .hd { color: var(--parent); background: var(--parent-dim); }
+  .box.child .hd { color: var(--child); background: var(--child-dim); }
+  .box .hd .cnt { letter-spacing: 0; text-transform: none; font-weight: 400; color: var(--text-dim); font-variant-numeric: tabular-nums; }
+  .box ol { list-style: none; margin: 0; padding: 8px 10px; font-family: var(--font-mono); font-size: 11.5px; line-height: 1.5; max-height: 32vh; overflow: auto; }
+  .box li { padding: 4px 6px; border-radius: 6px; display: grid; grid-template-columns: 20px 62px minmax(0, 1fr); gap: 6px; align-items: start; }
+  .box li .i { color: var(--text-dim); font-variant-numeric: tabular-nums; }
+  .box li .r { font-weight: 600; }
+  .box li .r.system { color: var(--text-dim); } .box li .r.user { color: var(--primary); } .box li .r.assistant { color: var(--parent); } .box li .r.tool { color: var(--child); }
+  .box li .t { color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .box li.new { background: var(--primary-dim); }
+  .box li.err .t { color: var(--danger); }
+  .box .empty { color: var(--text-dim); font-style: italic; padding: 10px 12px; font-size: 13px; }
+  .box.child.gone { opacity: .55; }
+  .totals { font-family: var(--font-mono); font-size: 11.5px; color: var(--text-dim); padding: 8px 12px; border-top: 1px solid var(--border); font-variant-numeric: tabular-nums; display: flex; justify-content: space-between; flex-wrap: wrap; gap: 6px; }
+  .mem-legend { font-size: 12px; color: var(--text-dim); }
+  @media (prefers-reduced-motion: no-preference) { .box li.new { animation: flash .9s ease-out; } }
+  @keyframes flash { from { background: var(--primary); } to { background: var(--primary-dim); } }
+
+  .theme-toggle { position: fixed; top: 14px; right: 16px; z-index: 20; font-family: var(--font-mono); font-size: 12px; padding: 7px 12px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface); color: var(--text); cursor: pointer; }
+  .theme-toggle:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+  footer { margin-top: 28px; font-family: var(--font-mono); font-size: 12px; color: var(--text-dim); max-width: 78ch; line-height: 1.7; }
+
+  @media (max-width: 768px) { body { padding: 16px 16px 40px; } h1 { font-size: 26px; } .mermaid-wrap { padding: 16px 12px; } }
+</style>
+</head>
+<body>
+<button type="button" class="theme-toggle" id="themeToggle" aria-label="Switch theme">light mode</button>
+<div class="container">
+
+  <p class="eyebrow animate" style="--i:0">cornac · week 4b · sub-agents</p>
+  <h1 class="animate" style="--i:1">One delegated fix, step by step</h1>
+  <p class="description animate" style="--i:2">
+    A real run of the frozen model, <strong>qwen3.5:4b</strong>: the parent agent hands a code search to a
+    <strong>child agent</strong>, then fixes the bug itself. First the whole run as one diagram, then the same
+    run one moment at a time, with the exact code, the arguments the model wrote, and both agents' memories
+    growing as you step. Every number comes from the captured run: 9 model calls, 69 seconds, 20,581 tokens.
+  </p>
+
+  <!-- ============ THE WHOLE RUN AS A SEQUENCE ============ -->
+  <h2 class="animate" style="--i:3">The whole run at a glance</h2>
+  <p class="section-hint animate" style="--i:3">who talks to whom, in order · the child lives only between spawn and reply</p>
+
+  <section class="diagram-shell animate" style="--i:4">
+    <p class="diagram-shell__hint">Ctrl/Cmd + wheel to zoom. Scroll to pan. Drag to pan when zoomed. Double-click to fit.</p>
+    <div class="mermaid-wrap">
+      <div class="zoom-controls">
+        <button type="button" data-action="zoom-in" title="Zoom in">+</button>
+        <button type="button" data-action="zoom-out" title="Zoom out">&minus;</button>
+        <button type="button" data-action="zoom-fit" title="Smart fit">&#8634;</button>
+        <button type="button" data-action="zoom-one" title="1:1 zoom">1:1</button>
+        <button type="button" data-action="zoom-expand" title="Open full size">&#x26F6;</button>
+        <span class="zoom-label">Loading...</span>
+      </div>
+      <div class="mermaid-viewport">
+        <div class="mermaid mermaid-canvas"></div>
+      </div>
+    </div>
+    <script type="text/plain" class="diagram-source">
+sequenceDiagram
+    autonumber
+    participant U as You
+    participant P as Parent agent<br/>11 tools, memory A
+    participant M as Model<br/>qwen3.5 4b
+    participant S as spawn_agent tool
+    participant C as Child agent<br/>4 tools, memory B
+    participant T as Other tools
+
+    U->>P: run the task
+    P->>M: 2 messages plus 11 tool schemas
+    M-->>P: wants spawn_agent with task, persona and 3 read only tools
+    P->>S: gates pass hook then policy, so run the tool
+    S->>C: build a child with the same provider, policy and approver, fresh memory
+    C->>M: 2 messages plus 4 tool schemas
+    M-->>C: wants grep for slugify
+    C->>T: grep finds 11 matching lines, kept in memory B
+    C->>M: 4 messages
+    M-->>C: five file names, no tool call
+    C-->>S: RunResult done, 2 steps, 2309 tokens
+    S->>P: absorb the tokens, return one line as Sub agent reply into memory A
+    P->>M: 4 messages plus 11 tool schemas
+    M-->>P: wants read_file utils.py
+    P->>T: read returns the file
+    P->>M: 6 messages
+    M-->>P: wants edit_file adding strip before lower
+    P->>T: edit replaced 1 occurrence at line 9
+    P->>M: 8 messages
+    M-->>P: wants run_python
+    Note over P: policy says ASK, no approver, so DENIED and the tool never runs
+    P->>M: 10 messages
+    M-->>P: wants run_bash python -m pytest -q
+    P->>T: pytest reports 2 passed
+    P->>M: 12 then 14 messages, one more denied call
+    M-->>P: final text, no tool call
+    P-->>U: RunResult done, 7 steps, 1 child, 20581 tokens
+    </script>
+  </section>
+  <div class="legend animate" style="--i:5">
+    <div class="legend-item"><div class="legend-swatch" style="background:var(--parent)"></div> parent agent</div>
+    <div class="legend-item"><div class="legend-swatch" style="background:var(--child)"></div> child agent</div>
+    <div class="legend-item"><div class="legend-swatch" style="background:var(--primary)"></div> harness code</div>
+    <div class="legend-item"><div class="legend-swatch" style="background:var(--danger)"></div> denied by policy</div>
+  </div>
+
+  <!-- ============ THE STEPPER ============ -->
+  <h2 class="animate" style="--i:6">The same run, one moment at a time</h2>
+  <p class="section-hint animate" style="--i:6">Next / Back, or the arrow keys · amber rows in the memory panels were added at this step</p>
+
+  <div class="stage animate" style="--i:7">
+    <nav class="rail" id="rail" aria-label="Moments"></nav>
+    <main class="card" id="card" aria-live="polite"></main>
+    <aside class="mem">
+      <div class="box parent">
+        <div class="hd"><span>Parent memory (A)</span><span class="cnt" id="pcnt">0 messages</span></div>
+        <ol id="pmem"></ol>
+        <div class="totals" id="ptot"><span>steps 0</span><span>tokens 0</span><span>children 0</span></div>
+      </div>
+      <div class="box child" id="cbox">
+        <div class="hd"><span>Child memory (B)</span><span class="cnt" id="ccnt">not born yet</span></div>
+        <ol id="cmem"></ol>
+        <div class="totals" id="ctot"><span>steps 0</span><span>tokens 0</span></div>
+      </div>
+      <p class="mem-legend">Memory = the agent's <code>messages</code> list. It is the only thing the model ever sees.</p>
+    </aside>
+  </div>
+
+  <footer>
+    Source of truth: <code>examples/subagent_stepper.py</code> (run it and press Enter through the same moments) and one captured run.
+    Code snippets quote <code>cornac/core/agent.py</code> and <code>cornac/tools/builtin/spawn.py</code>.
+  </footer>
+</div>
+
+<script>
+// ---------- the real data from one captured run ----------
+const SYS = 'You are a careful software engineer working in a sandboxed workspace. Delegate exploration to sub-agents when the task says so; make edits yourself.\n\nYour workspace is the directory /tmp/cornac_step_… Every path you give a tool is relative to that directory…';
+const TASK = 'The helper `slugify` in utils.py has a bug: a title with leading or trailing spaces gets a dash at the start or end… Do this in two steps. 1. Use spawn_agent to find every file that calls slugify. Give the sub-agent only the read-only tools (list_dir, read_file, grep)… 2. Fix the bug in utils.py yourself with edit_file, then run `python -m pytest -q`…';
+const CHILD_SYS = 'You are an exploration agent tasked with finding all files that call the slugify function in utils.py.\n\nYour workspace is the directory /tmp/cornac_step_… (added automatically by spawn_agent)';
+const CHILD_TASK = 'Find every file in the workspace that calls the slugify function (from utils.py). Use only read-only tools: list_dir, read_file, and grep. Reply with just the file names, one per line, nothing else.';
+
+const P = {
+  sys:  ['system', SYS],
+  user: ['user', TASK],
+  a1:   ['assistant', 'CALLS spawn_agent(task=…, system_prompt=…, tools=[list_dir, read_file, grep])'],
+  t1:   ['tool', 'Sub-agent reply:\\nexport.py\\nfeeds.py\\nposts.py\\ntest_utils.py\\nutils.py'],
+  a2:   ['assistant', 'CALLS read_file(path="utils.py")'],
+  t2:   ['tool', '"""Small helpers shared across the blog package."""\\n\\ndef slugify(title: str) -> str: …'],
+  a3:   ['assistant', 'CALLS edit_file(path="utils.py", old="    return title.lower()…", new="    return title.strip().lower()…")'],
+  t3:   ['tool', 'edited utils.py: replaced 1 occurrence (lines 9-9)'],
+  a4:   ['assistant', 'CALLS run_python(code="from utils import slugify; print(…)")'],
+  t4:   ['tool', 'Permission denied: the user did not allow run_python.', true],
+  a5:   ['assistant', 'CALLS run_bash(command="python -m pytest -q")'],
+  t5:   ['tool', '(exit code 0)\\n..  [100%]\\n2 passed in 0.17s'],
+  a6:   ['assistant', 'CALLS run_bash(command="python -c …")'],
+  t6:   ['tool', 'Permission denied: the user did not allow run_bash.', true],
+  a7:   ['assistant', 'The tests passed (exit code 0, 2 passed). Files that call slugify: export.py, feeds.py, posts.py, test_utils.py, utils.py. Fix: added .strip() before .lower()…'],
+};
+const C = {
+  sys:  ['system', CHILD_SYS],
+  user: ['user', CHILD_TASK],
+  a1:   ['assistant', 'CALLS grep(pattern="slugify", path=".")'],
+  t1:   ['tool', 'export.py:6:from utils import slugify\\nexport.py:10:…slugify(post.title)…\\nfeeds.py:4:…\\nposts.py:4:… (11 lines)'],
+  a2:   ['assistant', 'export.py\\nfeeds.py\\nposts.py\\ntest_utils.py\\nutils.py'],
+};
+
+const STEPS = [
+{ grp:'Setup', who:'setup', title:'Nothing yet', h:'The workspace: 9 files, one bug',
+  body:`Before any code runs there is a folder with nine small Python files. <code>utils.py</code> has a helper <code>slugify()</code> that turns a post title into a URL slug. It forgets to strip spaces, so <code>" Trailing Space "</code> becomes <code>-trailing-space-</code>. Three files call it. One test fails.`,
+  code:`<span class="c"># utils.py (line 9 is the bug)</span>
+<span class="k">def</span> slugify(title: str) -> str:
+    <span class="k">return</span> title.lower().replace(<span class="s">" "</span>, <span class="s">"-"</span>)   <span class="c"># no .strip()</span>`,
+  facts:[['files','9'],['callers of slugify','3 + 1 test'],['failing tests','1 of 2']],
+  p:[], pnew:[], c:null, tok:0, steps:0, kids:0 },
+
+{ grp:'Setup', who:'harness', title:'Step 1', h:'Build the toolbox: 11 tools, one of them special',
+  body:`<code>default_tools(workspace)</code> creates the eleven tool objects. Ten are ordinary. The eleventh, <code>spawn_agent</code>, is the one that can build another agent. Right now it is <strong>not attached to anything</strong>: it has no idea whose brain or rules it would hand to a child. That is fixed in the next step.`,
+  code:`registry = ToolRegistry(default_tools(workspace))
+<span class="c"># read_file, write_file, edit_file, list_dir, grep, run_bash,</span>
+<span class="c"># run_python, web_search, web_fetch, get_current_time, spawn_agent</span>
+
+<span class="c"># the spawn tool at this moment (real values):</span>
+SpawnAgent(depth=<span class="n">0</span>, max_depth=<span class="n">2</span>, max_children=<span class="n">5</span>, child_max_steps=<span class="n">10</span>)
+spawn._parent  <span class="c"># -> None   (not bound yet)</span>`,
+  facts:[['tools in registry','11'],['bound to an agent','no'],['schema bytes per call','6,217']],
+  p:[], pnew:[], c:null, tok:0, steps:0, kids:0 },
+
+{ grp:'Setup', who:'harness', title:'Step 2', h:'Build the agent, and it introduces itself to the tool',
+  body:`<code>Agent(...)</code> stores the brain (provider), the toolbox, the rulebook (policy), the hooks, and starts its memory with the system prompt. Then it walks the toolbox and calls <code>bind_parent(self)</code> on any tool that has that method. Only <code>spawn_agent</code> does. From now on the tool holds a reference to this agent and can read its provider, policy, approver and hooks whenever it runs.`,
+  code:`<span class="c"># cornac/core/agent.py, Agent.__init__</span>
+self.messages = [Message.system(system_prompt)]   <span class="c"># memory starts with 1 message</span>
+<span class="k">for</span> tool <span class="k">in</span> self.registry.tools():
+    <span class="k">if</span> hasattr(tool, <span class="s">"bind_parent"</span>):
+        tool.bind_parent(self)          <span class="c"># "I'm your parent; remember me"</span>
+
+<span class="c"># after this line, the real state:</span>
+spawn._parent <span class="k">is</span> agent   <span class="c"># True</span>`,
+  facts:[['policy','ask by default; 5 tools pre-allowed'],['approver','none (headless): ASK = DENY'],['max_steps','12'],['max_nudges','1']],
+  p:['sys'], pnew:['sys'], c:null, tok:0, steps:0, kids:0 },
+
+{ grp:'Parent', who:'harness', title:'Step 3', h:'agent.run(task): the loop starts',
+  body:`<code>run()</code> resets the per-run counters (steps, tokens, children, the repeat detector) and tells every tool with <code>reset_for_run()</code> to start fresh, so the "at most 5 children" budget is 0 again. Then it appends your task as a <strong>user</strong> message. Memory is now 2 messages. Nothing has been sent to the model yet.`,
+  code:`<span class="c"># cornac/core/agent.py, Agent.run</span>
+self._run_usage = Usage(); self._children = <span class="n">0</span>
+<span class="k">for</span> tool <span class="k">in</span> self.registry.tools():
+    <span class="k">if</span> hasattr(tool, <span class="s">"reset_for_run"</span>):
+        tool.reset_for_run()             <span class="c"># spawn budget: 0 of 5</span>
+self.messages.append(Message.user(user_message))
+self.hooks.fire(<span class="s">"on_user_message"</span>, user)`,
+  facts:[['spawn budget','0 of 5 used'],['memory','2 messages']],
+  p:['sys','user'], pnew:['user'], c:null, tok:0, steps:0, kids:0 },
+
+{ grp:'Parent', who:'parent', title:'Step 4 · call 1', h:'The parent asks the model, and gets back "spawn_agent"',
+  body:`The provider sends everything to Ollama: the 2 messages, the schemas of all 11 tools, the frozen options, and <code>think: false</code>. The model reads the task and the tool descriptions, and answers not with text but with a <strong>tool request</strong>. Look at the three arguments it wrote: a self-contained task (the child will have no memory of this conversation), a persona, and exactly the three read-only tools.`,
+  code:`<span class="c"># what went over the wire (real)</span>
+POST /api/chat  messages=<span class="n">2</span>  tools=<span class="n">11</span>
+options={temperature: <span class="n">0</span>, num_ctx: <span class="n">8192</span>, seed: <span class="n">42</span>, num_predict: <span class="n">2048</span>, presence_penalty: <span class="n">0</span>}  think=<span class="k">false</span>
+
+<span class="c"># the model's reply: one ToolCall</span>
+spawn_agent(
+  task=<span class="s">"Find every file in the workspace that calls the slugify function (from utils.py). Use only read-only tools: list_dir, read_file, and grep. Reply with just the file names, one per line, nothing else."</span>,
+  system_prompt=<span class="s">"You are an exploration agent tasked with finding all files that call the slugify function in utils.py."</span>,
+  tools=[<span class="s">"list_dir"</span>, <span class="s">"read_file"</span>, <span class="s">"grep"</span>]
+)`,
+  facts:[['input tokens','2,074'],['output tokens','167'],['parent steps','1']],
+  p:['sys','user','a1'], pnew:['a1'], c:null, tok:2241, steps:1, kids:0 },
+
+{ grp:'Parent', who:'harness', title:'Step 5', h:'Three gates before the tool may run',
+  body:`Every tool call passes the same three checks, in this order. First the <strong>hook gate</strong>: any <code>pre_tool_use</code> hook may veto; none is registered here. Second the <strong>policy</strong>: <code>spawn_agent</code> is <code>allow</code>. Third, the <strong>approver</strong>, only if the policy said ASK; it did not. So the registry executes the tool. Nothing is special about <code>spawn_agent</code> at this point; it is gated like <code>read_file</code>.`,
+  code:`<span class="c"># cornac/core/agent.py, _handle_call (abridged)</span>
+vetoes = self.hooks.gate(<span class="s">"pre_tool_use"</span>, call)        <span class="c"># []  nobody objected</span>
+decision = self.policy.check(call)                   <span class="c"># Decision.ALLOW</span>
+<span class="k">if</span> decision == Decision.ASK: decision = self.approver(...)   <span class="c"># skipped</span>
+<span class="k">return</span> self.registry.execute(call)                 <span class="c"># -> SpawnAgent.run(arguments)</span>`,
+  facts:[['hook veto','none'],['policy','allow'],['approver','not needed']],
+  p:['sys','user','a1'], pnew:[], c:null, tok:2241, steps:1, kids:0 },
+
+{ grp:'Spawn', who:'harness', title:'Step 6', h:'Inside spawn_agent.run(): the checks, then the child toolbox',
+  body:`The tool refuses early if it is unbound, the task is empty, the depth is at the cap, or the run has already spawned 5 children. None apply. Then it builds the child's toolbox from the requested names. They must all be tools the parent actually has. <code>spawn_agent</code> itself is never handed down; instead, because depth 1 is still below the cap of 2, the child gets a <strong>new</strong> spawner one level deeper that shares the same budget counter. So the child could spawn a grandchild, and it would count against the same 5.`,
+  code:`<span class="c"># cornac/tools/builtin/spawn.py, run() and _child_registry()</span>
+<span class="k">if</span> self._budget.exhausted: <span class="k">return</span> <span class="s">"Error: … already spawned 5 of at most 5 …"</span>
+available = parent.registry.names()             <span class="c"># the 11</span>
+names = [<span class="s">"list_dir"</span>, <span class="s">"read_file"</span>, <span class="s">"grep"</span>]        <span class="c"># the request, all known</span>
+tools = [parent.registry.get(n) <span class="k">for</span> n <span class="k">in</span> names] <span class="c"># the SAME objects, by reference</span>
+tools.append(SpawnAgent(depth=<span class="n">1</span>, _budget=self._budget))   <span class="c"># deeper spawner, shared budget</span>
+registry = ToolRegistry(tools)                  <span class="c"># 4 tools for the child</span>`,
+  facts:[['requested','3 tools'],['child gets','4 (3 + its own spawner)'],['depth','0 → 1'],['budget after','1 of 5']],
+  p:['sys','user','a1'], pnew:[], c:null, tok:2241, steps:1, kids:0 },
+
+{ grp:'Spawn', who:'harness', title:'Step 7', h:'The child is built: same brain, same rules, empty memory',
+  body:`This is the heart of it. A second <code>Agent</code> is constructed. Read what it is given: the parent's <strong>own</strong> provider, policy and approver objects (not copies), so the child can never be more privileged than the parent, and even a session "never" you answered earlier still binds it. It gets a smaller step budget (10). And its memory starts with just two messages: the persona plus the workspace description, and the task. The parent's conversation is <strong>not</strong> in it.`,
+  code:`<span class="c"># cornac/tools/builtin/spawn.py, run()</span>
+child = Agent(
+    provider=parent.provider,        <span class="c"># same brain</span>
+    registry=registry,               <span class="c"># the 4 tools from step 6</span>
+    system_prompt=persona + <span class="s">"\\n\\n"</span> + workspace.describe(),
+    max_steps=self.child_max_steps,  <span class="c"># 10</span>
+    policy=parent.policy,            <span class="c"># SAME object</span>
+    approver=parent.approver,        <span class="c"># SAME object (None here: ASK = DENY)</span>
+    hooks=self._child_bus(parent),   <span class="c"># own bus, wired back (step 9)</span>
+    max_nudges=parent.max_nudges,
+)
+self._budget.spawned += <span class="n">1</span>
+parent.hooks.fire(<span class="s">"on_spawn"</span>, task, <span class="n">1</span>)
+result = child.run(task)             <span class="c"># the ordinary loop, inside the child</span>`,
+  facts:[['child memory','2 messages'],['child tools','4'],['child max_steps','10'],['parent memory','unchanged: 3']],
+  p:['sys','user','a1'], pnew:[], c:['sys','user'], cnew:['sys','user'], tok:2241, steps:1, kids:0, csteps:0, ctok:0 },
+
+{ grp:'Child', who:'child', title:'Step 8 · call 2', h:'The child asks the model with only 4 tools, and greps',
+  body:`Now the child's loop runs. It sends its 2 messages and the schemas of its 4 tools (not 11). The model, seeing a small toolbox and a precise task, calls <code>grep</code> once. The result, eleven matching lines, lands in the <strong>child's</strong> memory. This is where the parent would have paid: had it grepped itself, those lines would sit in its own memory for the rest of the run.`,
+  code:`<span class="c"># the child's request (real)</span>
+POST /api/chat  messages=<span class="n">2</span>  tools=<span class="n">4</span>  [list_dir, read_file, grep, spawn_agent]
+<span class="c"># reply</span>
+grep(pattern=<span class="s">"slugify"</span>, path=<span class="s">"."</span>)
+<span class="c"># tool result appended to the CHILD's memory:</span>
+export.py:6:from utils import slugify
+export.py:10:return f"{OUTPUT_DIR}/{slugify(post.title)}.html"
+feeds.py:4:…  feeds.py:8:…  posts.py:4:…  posts.py:7:…  test_utils.py:…  utils.py:4:…`,
+  facts:[['input tokens','1,033'],['output tokens','45'],['child steps','1'],['child memory','4 messages']],
+  p:['sys','user','a1'], pnew:[], c:['sys','user','a1','t1'], cnew:['a1','t1'], tok:2241, steps:1, kids:0, csteps:1, ctok:1078 },
+
+{ grp:'Child', who:'harness', title:'Step 9', h:'The child\'s grep went through the parent\'s gates too',
+  body:`Between the request and the run, the child's tool call passed the same three gates. The policy is the shared object, so <code>grep: allow</code>. And the hook gate matters: the child's bus <strong>forwards</strong> <code>pre_tool_use</code> to the parent's hooks as a gate. A veto hook on the parent ("no bash while tests are red") would have blocked the child's call exactly as it blocks the parent's. This forwarding is the fix for a real bug the review found: the first version gave the child a bus with nobody on it, and delegation became a way around any hook-enforced rule.`,
+  code:`<span class="c"># cornac/tools/builtin/spawn.py, _child_bus()</span>
+<span class="k">def</span> forward_veto(call):
+    verdicts = parent.hooks.gate(<span class="s">"pre_tool_use"</span>, call)   <span class="c"># ask the PARENT's hooks</span>
+    <span class="k">if</span> Decision.DENY <span class="k">in</span> verdicts <span class="k">or</span> HOOK_FAILED <span class="k">in</span> verdicts:
+        <span class="k">return</span> Decision.DENY                <span class="c"># a crash fails closed, here too</span>
+bus.on(<span class="s">"pre_tool_use"</span>, forward_veto)
+<span class="c"># post_tool_use and on_permission_decision are forwarded as plain events,</span>
+<span class="c"># so an auditor on the parent sees every tool call in the tree.</span>
+<span class="c"># on_user_message / on_assistant_message / on_stop stay on the child's bus.</span>`,
+  facts:[['forwarded as gate','pre_tool_use'],['forwarded as events','post_tool_use, on_permission_decision'],['kept local','on_stop and conversation events']],
+  p:['sys','user','a1'], pnew:[], c:['sys','user','a1','t1'], cnew:[], tok:2241, steps:1, kids:0, csteps:1, ctok:1078 },
+
+{ grp:'Child', who:'child', title:'Step 10 · call 3', h:'The child answers with text, so its loop ends',
+  body:`Second child call: 4 messages in, and the model replies with five file names and no tool call. The child's loop reads "no tool call" as "done" and returns a <code>RunResult</code>: <code>stop_reason="done"</code>, 2 steps, 2,309 tokens. Had it run out of its 10 steps, <code>stop_reason</code> would say <code>"max_steps"</code> and <code>text</code> would be <code>None</code>. That distinction is about to matter.`,
+  code:`<span class="c"># the child's second request (real)</span>
+POST /api/chat  messages=<span class="n">4</span>  tools=<span class="n">4</span>
+<span class="c"># reply: text, no tool calls</span>
+<span class="s">"export.py\\nfeeds.py\\nposts.py\\ntest_utils.py\\nutils.py"</span>
+
+<span class="c"># child.run() returns</span>
+RunResult(text=<span class="s">"export.py\\n…"</span>, stop_reason=<span class="s">"done"</span>, steps=<span class="n">2</span>, usage=Usage(<span class="n">2248</span>, <span class="n">61</span>), nudges=<span class="n">0</span>)`,
+  facts:[['input tokens','1,215'],['output tokens','16'],['child steps','2'],['child total tokens','2,309']],
+  p:['sys','user','a1'], pnew:[], c:['sys','user','a1','t1','a2'], cnew:['a2'], tok:2241, steps:1, kids:0, csteps:2, ctok:2309 },
+
+{ grp:'Spawn', who:'harness', title:'Step 11', h:'Back in spawn_agent: absorb the cost, frame the reply',
+  body:`Control returns to the parent's <code>spawn_agent.run()</code>. Two things happen. The parent <strong>absorbs</strong> the child's 2,309 tokens into its running total and counts one child, so the final bill is honest. Then the child's <code>RunResult</code> is turned into a tool result: because <code>stop_reason</code> is <code>"done"</code>, the text is returned behind a <code>Sub-agent reply:</code> header. A child that gave up would produce an <strong>error</strong> instead, never an empty string the parent might read as "no callers found".`,
+  code:`<span class="c"># cornac/tools/builtin/spawn.py, run() and _reply()</span>
+parent.absorb_child(result.usage)          <span class="c"># _run_usage += 2309, _children = 1</span>
+parent.hooks.fire(<span class="s">"on_spawn_done"</span>, result, <span class="n">1</span>)
+<span class="k">if</span> result.stop_reason != <span class="s">"done"</span>:
+    <span class="k">return</span> <span class="s">"Error: sub-agent gave up after N steps without a final answer…"</span>
+<span class="k">return</span> <span class="s">"Sub-agent reply:\\n"</span> + truncate_head_tail(text, <span class="n">2000</span>, <span class="n">2000</span>)`,
+  facts:[['absorbed tokens','+2,309'],['parent children','1'],['reply length','55 chars'],['child memory','discarded']],
+  p:['sys','user','a1'], pnew:[], c:['sys','user','a1','t1','a2'], cnew:[], cgone:true, tok:4550, steps:1, kids:1, csteps:2, ctok:2309 },
+
+{ grp:'Parent', who:'harness', title:'Step 12', h:'The reply lands in the parent\'s memory as one tool message',
+  body:`The registry wraps the string as a <code>ToolResult</code>, the loop fires <code>post_tool_use</code>, and appends it to the parent's memory. Compare the two panels: the child's memory held the grep output and its whole dialogue; the parent's memory received <strong>one line of file names</strong>. That is context isolation. The search happened, the parent never saw it happen, and it has the answer.`,
+  code:`<span class="c"># parent memory, message [3]</span>
+Message(role=<span class="s">"tool"</span>, name=<span class="s">"spawn_agent"</span>, text=<span class="s">"Sub-agent reply:\\nexport.py\\nfeeds.py\\nposts.py\\ntest_utils.py\\nutils.py"</span>)`,
+  facts:[['parent memory','4 messages'],['of which from the child','1 line']],
+  p:['sys','user','a1','t1'], pnew:['t1'], c:['sys','user','a1','t1','a2'], cnew:[], cgone:true, tok:4550, steps:1, kids:1, csteps:2, ctok:2309 },
+
+{ grp:'Parent', who:'parent', title:'Step 13 · calls 4-5', h:'The parent reads the file and makes a one-line edit',
+  body:`With a clear head, the parent continues its own loop. Call 4: it asks for <code>read_file("utils.py")</code>. Call 5: it asks for <code>edit_file</code> with an exact <code>old</code> snippet and a <code>new</code> one that adds <code>.strip()</code>. The tool matched the snippet once, checked the edited file still compiles, and replaced line 9. Every one of these calls carries all 11 tool schemas again; the memory is now 8 messages.`,
+  code:`<span class="c"># call 5, the model's request (real)</span>
+edit_file(
+  path=<span class="s">"utils.py"</span>,
+  old=<span class="s">'    return title.lower().replace(" ", "-")'</span>,
+  new=<span class="s">'    return title.strip().lower().replace(" ", "-")'</span>
+)
+<span class="c"># tool result</span>
+edited utils.py: replaced <span class="n">1</span> occurrence (lines <span class="n">9-9</span>)`,
+  facts:[['call 4 tokens','2,272 in / 54 out'],['call 5 tokens','2,424 in / 135 out'],['parent steps','3']],
+  p:['sys','user','a1','t1','a2','t2','a3','t3'], pnew:['a2','t2','a3','t3'], c:['sys','user','a1','t1','a2'], cnew:[], cgone:true, tok:9435, steps:3, kids:1, csteps:2, ctok:2309 },
+
+{ grp:'Parent', who:'parent', title:'Step 14 · call 6', h:'A denied call: the policy says no, the model adapts',
+  body:`The parent wants to verify with <code>run_python</code>. This demo's policy does not pre-allow it, so the policy answers ASK; there is no approver, so ASK becomes DENY. The tool never runs. The refusal comes back as an ordinary tool message marked as an error, and the model reads it and picks a different route. Nothing crashed; the denial is just one more observation in memory.`,
+  code:`<span class="c"># _handle_call, gate 2</span>
+decision = self.policy.check(call)          <span class="c"># Decision.ASK  (run_python not listed)</span>
+decision = self.approver(...) <span class="k">if</span> self.approver <span class="k">else</span> Decision.DENY   <span class="c"># no approver → DENY</span>
+<span class="k">return</span> ToolResult(content=<span class="s">"Permission denied: the user did not allow run_python."</span>, is_error=<span class="k">True</span>)`,
+  facts:[['policy','ask'],['approver','none → deny'],['tool executed','no']],
+  callout:'deny', calloutText:'Same rulebook object for parent and child. Had the child tried run_python, it would have been refused the same way.',
+  p:['sys','user','a1','t1','a2','t2','a3','t3','a4','t4'], pnew:['a4','t4'], c:['sys','user','a1','t1','a2'], cnew:[], cgone:true, tok:12095, steps:4, kids:1, csteps:2, ctok:2309 },
+
+{ grp:'Parent', who:'parent', title:'Step 15 · calls 7-8', h:'The tests pass; one more denied call',
+  body:`Call 7: <code>run_bash("python -m pytest -q")</code> is on the policy's allow list (prefix match on the executed argument), so it runs: 2 passed. Call 8: the model tries another bash command that is not allow-listed; denied again. The repeat detector did not fire here because the two bash commands were different calls.`,
+  code:`<span class="c"># call 7 result</span>
+(exit code <span class="n">0</span>)
+..                                   [100%]
+<span class="n">2</span> passed in 0.17s
+<span class="c"># call 8: run_bash("python -c …") → policy ASK → no approver → DENY</span>`,
+  facts:[['tests','2 passed'],['parent steps','6'],['parent memory','14 messages']],
+  callout:'ok', calloutText:'The fix is on disk and proven by the project\'s own tests, not by the model\'s word.',
+  p:['sys','user','a1','t1','a2','t2','a3','t3','a4','t4','a5','t5','a6','t6'], pnew:['a5','t5','a6','t6'], c:['sys','user','a1','t1','a2'], cnew:[], cgone:true, tok:17622, steps:6, kids:1, csteps:2, ctok:2309 },
+
+{ grp:'Parent', who:'parent', title:'Step 16 · call 9', h:'The parent answers in text, so the loop ends',
+  body:`Ninth and last model call: 14 messages in, and the reply has no tool call. The nudge check looks at the last line ("…converting to lowercase and replacing spaces with dashes.") and finds no announcement of further work, so it is final. <code>run()</code> returns a <code>RunResult</code>.`,
+  code:`RunResult(
+  text=<span class="s">"The tests passed (exit code 0, 2 passed). Files that call slugify: export.py, feeds.py, posts.py, test_utils.py, utils.py. Fix: added .strip()…"</span>,
+  stop_reason=<span class="s">"done"</span>,
+  steps=<span class="n">7</span>,          <span class="c"># the parent's model calls only</span>
+  children=<span class="n">1</span>,       <span class="c"># direct children</span>
+  nudges=<span class="n">0</span>,
+  usage=Usage(input_tokens=<span class="n">19882</span>, output_tokens=<span class="n">699</span>),   <span class="c"># child's 2,309 included</span>
+  duration=<span class="n">69.0</span>,
+)`,
+  facts:[['parent steps','7'],['child steps','2 (not in steps)'],['total tokens','20,581'],['duration','69 s']],
+  p:['sys','user','a1','t1','a2','t2','a3','t3','a4','t4','a5','t5','a6','t6','a7'], pnew:['a7'], c:['sys','user','a1','t1','a2'], cnew:[], cgone:true, tok:20581, steps:7, kids:1, csteps:2, ctok:2309 },
+
+{ grp:'End', who:'setup', title:'The whole thing', h:'What just happened, in five rules',
+  body:`<ol>
+<li><strong>Fresh memory.</strong> The child started with 2 messages of its own and never saw the parent's 3. The parent never saw the child's grep output.</li>
+<li><strong>A subset of tools.</strong> The parent has 11; the child got 4 (the 3 requested plus its own deeper spawner). <code>spawn_agent</code> itself is never handed down.</li>
+<li><strong>Never more privileged.</strong> Same provider, same policy object, same approver, and the parent's veto hooks gate the child's calls too.</li>
+<li><strong>Bounded.</strong> Depth at most 2, five children per run, counted across the whole tree by one shared budget.</li>
+<li><strong>Honest returns.</strong> Only the child's final text came back, framed as its own words; a child that gives up produces an error; its 2,309 tokens are in the parent's bill.</li>
+</ol>
+<p class="say" style="margin-top:12px">Run it yourself and press Enter through the same moments: <code>python examples/subagent_stepper.py</code></p>`,
+  code:null, facts:[['model calls','9 (7 parent + 2 child)'],['parent memory','15 messages'],['child memory','5, then discarded'],['fix on disk','yes, 2 tests pass']],
+  p:['sys','user','a1','t1','a2','t2','a3','t3','a4','t4','a5','t5','a6','t6','a7'], pnew:[], c:['sys','user','a1','t1','a2'], cnew:[], cgone:true, tok:20581, steps:7, kids:1, csteps:2, ctok:2309 },
+];
+
+// ---------- stepper rendering ----------
+let i = 0;
+try { const saved = parseInt(localStorage.getItem('subagent-step'), 10); if (!isNaN(saved) && saved >= 0 && saved < STEPS.length) i = saved; } catch (e) {}
+const rail = document.getElementById('rail');
+function buildRail(){
+  rail.innerHTML = '';
+  let lastGrp = null;
+  STEPS.forEach((s, k) => {
+    if (s.grp !== lastGrp) { const g = document.createElement('div'); g.className='grp'; g.textContent = s.grp; rail.appendChild(g); lastGrp = s.grp; }
+    const b = document.createElement('button'); b.type='button'; b.textContent = s.title; b.dataset.k = k;
+    b.addEventListener('click', () => go(k)); rail.appendChild(b);
+  });
+}
+function esc(t){ return t.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function renderMem(olId, cntId, totId, src, keys, newKeys, steps, tok, kids, box, gone){
+  const ol = document.getElementById(olId); ol.innerHTML = '';
+  if (keys === null) { ol.innerHTML = '<div class="empty">Not built yet. A child exists only while spawn_agent is running.</div>'; document.getElementById(cntId).textContent = 'not born yet'; }
+  else {
+    keys.forEach((key, n) => {
+      const [role, text, err] = src[key];
+      const li = document.createElement('li'); if (newKeys.includes(key)) li.classList.add('new'); if (err) li.classList.add('err');
+      li.innerHTML = `<span class="i">${n}</span><span class="r ${role}">${role}</span><span class="t" title="${esc(text)}">${esc(text.replace(/\\n/g,' ⏎ '))}</span>`;
+      ol.appendChild(li);
+    });
+    document.getElementById(cntId).textContent = keys.length + ' message' + (keys.length===1?'':'s') + (gone ? ' · discarded' : '');
+  }
+  const t = document.getElementById(totId);
+  t.innerHTML = kids === undefined ? `<span>steps ${steps}</span><span>tokens ${tok.toLocaleString()}</span>` : `<span>steps ${steps}</span><span>tokens ${tok.toLocaleString()}</span><span>children ${kids}</span>`;
+  if (box) box.classList.toggle('gone', !!gone);
+}
+function render(){
+  const s = STEPS[i];
+  const card = document.getElementById('card');
+  const facts = (s.facts||[]).map(([k,v]) => `<div class="fact"><div class="k">${k}</div><div class="v">${v}</div></div>`).join('');
+  card.innerHTML = `
+    <span class="who ${s.who}">${{parent:'parent acting',child:'child acting',harness:'harness code',setup:'context'}[s.who]}</span>
+    <h3><span class="n">${s.title}</span> &nbsp;${s.h}</h3>
+    <p class="say">${s.body}</p>
+    ${facts ? `<div class="facts">${facts}</div>` : ''}
+    ${s.callout ? `<div class="callout ${s.callout}">${s.calloutText}</div>` : ''}
+    ${s.code ? `<div class="pre-label">the code / the data at this moment</div><pre>${s.code}</pre>` : ''}
+    <div class="nav">
+      <button type="button" id="prev" ${i===0?'disabled':''}>&larr; Back</button>
+      <span class="pos">${i+1} / ${STEPS.length}</span>
+      <button type="button" id="next" class="primary" ${i===STEPS.length-1?'disabled':''}>Next &rarr;</button>
+    </div>`;
+  document.getElementById('prev').addEventListener('click', () => go(i-1));
+  document.getElementById('next').addEventListener('click', () => go(i+1));
+  renderMem('pmem','pcnt','ptot', P, s.p, s.pnew, s.steps, s.tok, s.kids, null, false);
+  renderMem('cmem','ccnt','ctot', C, s.c, s.cnew||[], s.csteps||0, s.ctok||0, undefined, document.getElementById('cbox'), s.cgone);
+  rail.querySelectorAll('button').forEach(b => { const k = +b.dataset.k; b.classList.toggle('on', k===i); b.classList.toggle('done', k<i); });
+  const on = rail.querySelector('button.on'); if (on && on.scrollIntoView) on.scrollIntoView({block:'nearest', inline:'nearest'});
+}
+function go(k){ if (k<0 || k>=STEPS.length) return; i = k; try { localStorage.setItem('subagent-step', String(i)); } catch(e){} render(); }
+document.addEventListener('keydown', e => {
+  if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA')) return;
+  if (e.key==='ArrowRight' || e.key==='ArrowDown') { e.preventDefault(); go(i+1); }
+  if (e.key==='ArrowLeft' || e.key==='ArrowUp') { e.preventDefault(); go(i-1); }
+});
+buildRail(); render();
+</script>
+
+<script type="module">
+  import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+
+  const config = { fitPadding: 28, minHeight: 360, maxHeightPx: 960, maxHeightVh: 0.84, maxInitialZoom: 1.8, minZoom: 0.08, maxZoom: 6.5, zoomStep: 0.14, readabilityFloor: 0.58 };
+  const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
+  let activeDrag = null;
+  addEventListener('mousemove', (e) => activeDrag?.onMove(e));
+  addEventListener('mouseup', () => { activeDrag?.onEnd(); activeDrag = null; });
+
+  const isDark = () => document.documentElement.getAttribute('data-theme') !== 'light';
+  function themeVars() {
+    const d = isDark();
+    return {
+      fontFamily: "'IBM Plex Sans', system-ui, sans-serif",
+      fontSize: '14px',
+      primaryColor: d ? '#3a2c10' : '#fef3c7',
+      primaryBorderColor: d ? '#fbbf24' : '#b45309',
+      primaryTextColor: d ? '#e7e5e4' : '#1c1917',
+      secondaryColor: d ? '#12283a' : '#e0f2fe',
+      secondaryBorderColor: d ? '#7dd3fc' : '#0369a1',
+      tertiaryColor: d ? '#132a1c' : '#dcfce7',
+      tertiaryBorderColor: d ? '#86efac' : '#15803d',
+      lineColor: d ? '#a8a29e' : '#6b6560',
+      actorBkg: d ? '#292524' : '#ffffff',
+      actorBorder: d ? '#fbbf24' : '#b45309',
+      actorTextColor: d ? '#e7e5e4' : '#1c1917',
+      actorLineColor: d ? '#57534e' : '#d6d3d1',
+      signalColor: d ? '#e7e5e4' : '#1c1917',
+      signalTextColor: d ? '#e7e5e4' : '#1c1917',
+      noteBkgColor: d ? '#331717' : '#fee2e2',
+      noteTextColor: d ? '#e7e5e4' : '#1c1917',
+      noteBorderColor: d ? '#fca5a5' : '#b91c1c',
+      sequenceNumberColor: '#ffffff',
+      background: d ? '#292524' : '#ffffff',
+    };
+  }
+  function initMermaid() { mermaid.initialize({
+    startOnLoad: false,
+    theme: 'base',
+    look: 'classic',
+    sequence: { actorMargin: 28, messageMargin: 34, noteMargin: 8, mirrorActors: false, useMaxWidth: false },
+    themeVariables: themeVars()
+  }); }
+  initMermaid();
+
+  const rerenderers = [];
+  function initDiagram(shell) {
+    const wrap = shell.querySelector('.mermaid-wrap');
+    const viewport = shell.querySelector('.mermaid-viewport');
+    const canvas = shell.querySelector('.mermaid-canvas');
+    const source = shell.querySelector('.diagram-source');
+    const label = shell.querySelector('.zoom-label');
+    if (!wrap || !viewport || !canvas || !source || !label) { console.error('initDiagram: missing required elements in', shell); return; }
+
+    let zoom = 1, fitMode = 'contain', panX = 0, panY = 0, svgW = 0, svgH = 0;
+    let sx = 0, sy = 0, spx = 0, spy = 0, touchDist = 0, touchCx = 0, touchCy = 0;
+
+    function constrainPan() {
+      const vpW = viewport.clientWidth, vpH = viewport.clientHeight, rW = svgW * zoom, rH = svgH * zoom, pad = config.fitPadding;
+      panX = (rW + pad * 2 <= vpW) ? (vpW - rW) / 2 : clamp(panX, vpW - rW - pad, pad);
+      panY = (rH + pad * 2 <= vpH) ? (vpH - rH) / 2 : clamp(panY, vpH - rH - pad, pad);
+    }
+    function applyTransform() {
+      const svg = canvas.querySelector('svg'); if (!svg || !svgW) return;
+      constrainPan();
+      svg.style.width = (svgW * zoom) + 'px'; svg.style.height = (svgH * zoom) + 'px';
+      canvas.style.transform = `translate(${panX}px, ${panY}px)`;
+      label.textContent = Math.round(zoom * 100) + '% — ' + fitMode;
+    }
+    function canPan() { return svgW * zoom + config.fitPadding * 2 > viewport.clientWidth || svgH * zoom + config.fitPadding * 2 > viewport.clientHeight; }
+    function computeSmartFit() {
+      const vpW = viewport.clientWidth, vpH = viewport.clientHeight;
+      const aW = Math.max(80, vpW - config.fitPadding * 2), aH = Math.max(80, vpH - config.fitPadding * 2);
+      const contain = Math.min(aW / svgW, aH / svgH);
+      let z = contain, mode = 'contain';
+      if (contain < config.readabilityFloor) {
+        const chartR = svgH / svgW, vpR = vpH / Math.max(vpW, 1);
+        if (chartR >= vpR) { z = aW / svgW; mode = 'width-priority'; } else { z = aH / svgH; mode = 'height-priority'; }
+      }
+      return { zoom: clamp(z, config.minZoom, config.maxInitialZoom), mode };
+    }
+    function fitDiagram() { if (!svgW) return; const fit = computeSmartFit(); zoom = fit.zoom; fitMode = fit.mode; panX = (viewport.clientWidth - svgW * zoom) / 2; panY = (viewport.clientHeight - svgH * zoom) / 2; applyTransform(); }
+    function setOneToOne() { zoom = clamp(1, config.minZoom, config.maxZoom); fitMode = '1:1'; panX = (viewport.clientWidth - svgW * zoom) / 2; panY = (viewport.clientHeight - svgH * zoom) / 2; applyTransform(); }
+    function zoomAround(factor, cx, cy) { const next = clamp(zoom * factor, config.minZoom, config.maxZoom); const ratio = next / zoom; panX = cx - ratio * (cx - panX); panY = cy - ratio * (cy - panY); zoom = next; fitMode = 'custom'; applyTransform(); }
+    function readSvgNaturalSize(svg) {
+      let w = 0, h = 0;
+      if (svg.viewBox?.baseVal?.width > 0) { w = svg.viewBox.baseVal.width; h = svg.viewBox.baseVal.height; }
+      if (!w) { w = parseFloat(svg.getAttribute('width')) || 0; h = parseFloat(svg.getAttribute('height')) || 0; }
+      if (!w) { const b = svg.getBBox(); w = b.width; h = b.height; }
+      if (!w) { const r = svg.getBoundingClientRect(); w = r.width || 1000; h = r.height || 700; }
+      if (!svg.getAttribute('viewBox')) svg.setAttribute('viewBox', `0 0 ${w} ${h}`);
+      return { w, h };
+    }
+    function setAdaptiveHeight() {
+      if (!svgW) return;
+      const usableW = Math.max(280, wrap.getBoundingClientRect().width - 2);
+      const idealH = (svgH / svgW) * usableW + config.fitPadding * 2;
+      const maxVp = Math.floor(innerHeight * config.maxHeightVh);
+      const hardMax = Math.min(config.maxHeightPx, Math.max(config.minHeight + 40, maxVp));
+      wrap.style.height = Math.round(clamp(idealH, config.minHeight, hardMax)) + 'px';
+    }
+    function openInNewTab() {
+      const svg = canvas.querySelector('svg'); if (!svg) return;
+      const clone = svg.cloneNode(true); clone.style.width = ''; clone.style.height = '';
+      const bg = getComputedStyle(document.documentElement).getPropertyValue('--bg').trim() || (isDark() ? '#1c1917' : '#faf8f5');
+      const html = `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Diagram</title><style>body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:${bg};padding:40px;box-sizing:border-box}svg{max-width:100%;max-height:90vh;height:auto}</style></head><body>${clone.outerHTML}</body></html>`;
+      open(URL.createObjectURL(new Blob([html], { type: 'text/html' })), '_blank');
+    }
+    async function render() {
+      try {
+        const code = source.textContent.trim();
+        if (!code) { label.textContent = 'Error: Empty source'; return; }
+        const id = 'diagram-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);
+        const { svg } = await mermaid.render(id, code);
+        const parsed = new DOMParser().parseFromString(svg, 'text/html');
+        const parsedSvg = parsed.body.querySelector('svg');
+        if (!parsedSvg) { label.textContent = 'Error: No SVG'; return; }
+        canvas.replaceChildren(document.adoptNode(parsedSvg));
+        const svgNode = canvas.querySelector('svg');
+        const size = readSvgNaturalSize(svgNode); svgW = size.w; svgH = size.h;
+        svgNode.removeAttribute('width'); svgNode.removeAttribute('height'); svgNode.style.maxWidth = 'none'; svgNode.style.display = 'block';
+        setAdaptiveHeight(); fitDiagram();
+      } catch (err) { console.error('Mermaid render failed:', err); label.textContent = 'Error: ' + (err.message || 'Render failed'); }
+    }
+    const actions = {
+      'zoom-in': () => zoomAround(1 + config.zoomStep, viewport.clientWidth / 2, viewport.clientHeight / 2),
+      'zoom-out': () => zoomAround(1 / (1 + config.zoomStep), viewport.clientWidth / 2, viewport.clientHeight / 2),
+      'zoom-fit': fitDiagram, 'zoom-one': setOneToOne, 'zoom-expand': openInNewTab
+    };
+    Object.entries(actions).forEach(([action, handler]) => { wrap.querySelector(`[data-action="${action}"]`)?.addEventListener('click', handler); });
+    viewport.addEventListener('dblclick', fitDiagram);
+    viewport.addEventListener('wheel', (e) => {
+      if (e.ctrlKey || e.metaKey) { e.preventDefault(); const rect = viewport.getBoundingClientRect(); const factor = e.deltaY < 0 ? 1 + config.zoomStep : 1 / (1 + config.zoomStep); zoomAround(factor, e.clientX - rect.left, e.clientY - rect.top); return; }
+      if (canPan()) { e.preventDefault(); panX -= e.deltaX; panY -= e.deltaY; applyTransform(); }
+    }, { passive: false });
+    viewport.addEventListener('mousedown', (e) => {
+      if (e.target.closest('.zoom-controls') || !canPan()) return;
+      wrap.classList.add('is-panning'); sx = e.clientX; sy = e.clientY; spx = panX; spy = panY; e.preventDefault();
+      activeDrag = { onMove: (ev) => { panX = spx + (ev.clientX - sx); panY = spy + (ev.clientY - sy); applyTransform(); }, onEnd: () => { wrap.classList.remove('is-panning'); } };
+    });
+    viewport.addEventListener('touchstart', (e) => {
+      if (e.touches.length === 1) { sx = e.touches[0].clientX; sy = e.touches[0].clientY; spx = panX; spy = panY; }
+      else if (e.touches.length === 2) { const dx = e.touches[0].clientX - e.touches[1].clientX, dy = e.touches[0].clientY - e.touches[1].clientY; touchDist = Math.sqrt(dx * dx + dy * dy); const r = viewport.getBoundingClientRect(); touchCx = (e.touches[0].clientX + e.touches[1].clientX) / 2 - r.left; touchCy = (e.touches[0].clientY + e.touches[1].clientY) / 2 - r.top; }
+    }, { passive: true });
+    viewport.addEventListener('touchmove', (e) => {
+      if (e.touches.length === 1 && canPan()) {
+        if (touchDist > 0) { sx = e.touches[0].clientX; sy = e.touches[0].clientY; spx = panX; spy = panY; touchDist = 0; }
+        e.preventDefault(); panX = spx + (e.touches[0].clientX - sx); panY = spy + (e.touches[0].clientY - sy); applyTransform();
+      } else if (e.touches.length === 2 && touchDist > 0) {
+        e.preventDefault(); const dx = e.touches[0].clientX - e.touches[1].clientX, dy = e.touches[0].clientY - e.touches[1].clientY; const d = Math.sqrt(dx * dx + dy * dy); zoomAround(d / touchDist, touchCx, touchCy); touchDist = d;
+      }
+    }, { passive: false });
+    new ResizeObserver(() => { if (svgW) { setAdaptiveHeight(); fitDiagram(); } }).observe(wrap);
+    rerenderers.push(render); render();
+  }
+  document.querySelectorAll('.diagram-shell').forEach(initDiagram);
+  window.rerenderDiagrams = () => Promise.all(rerenderers.map((render) => render()));
+
+  // Theme toggle: dark is the default. The choice is remembered per browser.
+  const root = document.documentElement;
+  const toggle = document.getElementById('themeToggle');
+  function applyTheme(t) {
+    if (t === 'light') root.setAttribute('data-theme', 'light'); else root.removeAttribute('data-theme');
+    toggle.textContent = t === 'light' ? 'dark mode' : 'light mode';
+    initMermaid();
+    window.rerenderDiagrams();
+  }
+  try { const saved = localStorage.getItem('subagent-theme'); if (saved === 'light') applyTheme('light'); } catch (e) {}
+  toggle.addEventListener('click', () => {
+    const next = root.getAttribute('data-theme') === 'light' ? 'dark' : 'light';
+    try { localStorage.setItem('subagent-theme', next); } catch (e) {}
+    applyTheme(next);
+  });
+</script>
+</body>
+</html>

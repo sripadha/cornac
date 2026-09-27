@@ -1,0 +1,426 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ankus · Week 1 — The Walking Skeleton</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%231c1917'/%3E%3Cpath d='M20 46c0-14 6-24 12-24s12 10 12 24' fill='none' stroke='%23f59e0b' stroke-width='4' stroke-linecap='round'/%3E%3Ccircle cx='32' cy='16' r='5' fill='%23fbbf24'/%3E%3C/svg%3E">
+<style>
+  :root{
+    --bg:#faf8f5; --panel:#ffffff; --ink:#1c1917; --soft:#57534e; --muted:#78716c;
+    --amber:#b45309; --amber-bg:#fef3c7; --amber-br:#f59e0b;
+    --blue:#0369a1; --blue-bg:#e0f2fe; --blue-br:#38bdf8;
+    --green:#15803d; --green-bg:#dcfce7; --green-br:#4ade80;
+    --red:#b91c1c; --red-bg:#fee2e2; --red-br:#f87171;
+    --border:#e7e2db; --code-bg:#1c1917; --code-ink:#e7e5e4; --code-c:#a8a29e; --code-k:#fbbf24; --code-s:#7dd3fc;
+    --link:#b45309;
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --bg:#1c1917; --panel:#292524; --ink:#e7e5e4; --soft:#d6d3d1; --muted:#a8a29e;
+      --amber:#fbbf24; --amber-bg:#3a2c10; --amber-br:#f59e0b;
+      --blue:#7dd3fc; --blue-bg:#12283a; --blue-br:#38bdf8;
+      --green:#86efac; --green-bg:#132a1c; --green-br:#4ade80;
+      --red:#fca5a5; --red-bg:#331717; --red-br:#f87171;
+      --border:#44403c; --code-bg:#0f0d0c; --code-ink:#e7e5e4;
+      --link:#fbbf24;
+    }
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{background:var(--bg);color:var(--ink);font-family:ui-sans-serif,system-ui,"Segoe UI",Roboto,sans-serif;line-height:1.65;font-size:17px}
+  .layout{display:grid;grid-template-columns:260px minmax(0,1fr);gap:0;max-width:1200px;margin:0 auto}
+  /* sidebar */
+  nav{position:sticky;top:0;align-self:start;height:100vh;overflow-y:auto;padding:28px 20px;border-right:1px solid var(--border)}
+  nav .brand{font-weight:800;font-size:18px;letter-spacing:-.01em;margin-bottom:2px}
+  nav .brandsub{color:var(--muted);font-size:12.5px;margin-bottom:20px}
+  nav a{display:block;color:var(--soft);text-decoration:none;font-size:14px;padding:5px 10px;border-radius:7px;border-left:2px solid transparent}
+  nav a:hover{background:var(--amber-bg);color:var(--amber)}
+  nav a.sec{font-weight:700;color:var(--ink);margin-top:14px}
+  nav a.sub{padding-left:22px;font-size:13.5px}
+  /* main */
+  main{padding:44px 48px 100px;min-width:0}
+  .kicker{color:var(--amber);font-weight:700;letter-spacing:.16em;text-transform:uppercase;font-size:12.5px}
+  h1{font-size:38px;line-height:1.12;margin:8px 0 14px;font-weight:800;letter-spacing:-.02em}
+  h2{font-size:26px;margin:52px 0 8px;font-weight:800;letter-spacing:-.01em;scroll-margin-top:20px}
+  h3{font-size:19px;margin:30px 0 6px;font-weight:700;scroll-margin-top:20px}
+  h2 .num{color:var(--amber);font-variant-numeric:tabular-nums}
+  p{margin:12px 0;color:var(--soft)}
+  .lede{font-size:19px;color:var(--soft);max-width:64ch}
+  .lede strong{color:var(--ink)}
+  main strong{color:var(--ink)}
+  em{color:var(--ink);font-style:italic}
+  a.ref{color:var(--link)}
+  code.inl{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.86em;background:var(--amber-bg);color:var(--amber);padding:1px 6px;border-radius:5px;white-space:nowrap}
+  ul,ol{margin:12px 0 12px 4px;padding-left:22px;color:var(--soft)}
+  li{margin:6px 0}
+  hr{border:none;border-top:1px solid var(--border);margin:40px 0}
+  /* code block */
+  pre{background:var(--code-bg);color:var(--code-ink);border-radius:12px;padding:18px 20px;overflow-x:auto;margin:16px 0;font-size:13.5px;line-height:1.6;border:1px solid rgba(255,255,255,.06)}
+  pre code{font-family:ui-monospace,Menlo,Consolas,monospace;white-space:pre}
+  .c{color:var(--code-c);font-style:italic}
+  .k{color:var(--code-k)}
+  .filetag{font-family:ui-monospace,monospace;font-size:12px;color:var(--muted);margin:18px 0 -8px;padding-left:4px}
+  /* callouts */
+  .box{border-radius:0 12px 12px 0;padding:14px 18px;margin:18px 0;border-left:4px solid var(--muted);background:var(--panel)}
+  .box .lbl{font-weight:800;font-size:12.5px;letter-spacing:.05em;text-transform:uppercase;display:block;margin-bottom:4px}
+  .box p{margin:6px 0}
+  .box p:first-of-type{margin-top:2px}
+  .analogy{border-left-color:var(--blue-br);background:var(--blue-bg)} .analogy .lbl{color:var(--blue)}
+  .why{border-left-color:var(--amber-br);background:var(--amber-bg)} .why .lbl{color:var(--amber)}
+  .gotcha{border-left-color:var(--red-br);background:var(--red-bg)} .gotcha .lbl{color:var(--red)}
+  .proof{border-left-color:var(--green-br);background:var(--green-bg)} .proof .lbl{color:var(--green)}
+  .box.analogy p,.box.why p,.box.gotcha p,.box.proof p{color:var(--ink)}
+  /* trace table */
+  .trace{margin:16px 0;border:1px solid var(--border);border-radius:12px;overflow:hidden}
+  .trace .row{display:grid;grid-template-columns:120px 1fr;gap:0;border-bottom:1px solid var(--border)}
+  .trace .row:last-child{border-bottom:none}
+  .trace .role{font-family:ui-monospace,monospace;font-size:12.5px;font-weight:700;padding:11px 14px;background:var(--panel)}
+  .trace .body{padding:11px 14px;font-size:14.5px;color:var(--soft)}
+  .role.system{color:var(--muted)} .role.user{color:var(--green)} .role.assistant{color:var(--amber)} .role.tool{color:var(--blue)}
+  .body .n{color:var(--muted);font-size:13px}
+  .stack{font-family:ui-monospace,monospace;font-size:13px;line-height:1.9;background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:16px 18px;margin:16px 0;color:var(--soft)}
+  .stack b{color:var(--ink)}
+  footer{color:var(--muted);font-size:13.5px;margin-top:60px;border-top:1px solid var(--border);padding-top:20px}
+  .next{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:18px 20px;margin-top:24px}
+  .next .lbl{font-weight:800;font-size:12.5px;letter-spacing:.05em;text-transform:uppercase;color:var(--amber);display:block;margin-bottom:6px}
+  @media (max-width:860px){
+    .layout{grid-template-columns:1fr}
+    nav{position:static;height:auto;border-right:none;border-bottom:1px solid var(--border)}
+    main{padding:28px 22px 80px}
+    h1{font-size:30px}
+  }
+</style>
+</head>
+<body>
+<div class="layout">
+
+<nav>
+  <div class="brand">ankus</div>
+  <div class="brandsub">learning walkthrough · Week 1</div>
+  <a class="sec" href="#top">The Walking Skeleton</a>
+  <a class="sub" href="#idea">What a harness is</a>
+  <a class="sub" href="#model">The mental model</a>
+  <a class="sec" href="#l1">Layer 1 · Messages</a>
+  <a class="sub" href="#l1-toolcall">ToolCall</a>
+  <a class="sub" href="#l1-result">ToolResult</a>
+  <a class="sub" href="#l1-message">Message</a>
+  <a class="sec" href="#l2">Layer 2 · Tools</a>
+  <a class="sub" href="#l2-contract">The 4-part contract</a>
+  <a class="sub" href="#l2-decorator">The @tool decorator</a>
+  <a class="sub" href="#l2-registry">The registry</a>
+  <a class="sec" href="#l3">Layer 3 · Providers</a>
+  <a class="sec" href="#l4">Layer 4 · The Loop</a>
+  <a class="sec" href="#trace">One request, traced</a>
+  <a class="sec" href="#recap">The big ideas</a>
+</nav>
+
+<main id="top">
+  <div class="kicker">ankus · from-scratch agent harness</div>
+  <h1>Week 1 — The Walking Skeleton</h1>
+  <p class="lede">The complete agent, built from four layers. By the end of this page you'll
+  understand <strong>exactly</strong> how a stateless text model becomes an agent that calls tools —
+  every layer, with the real code, the same way it was taught line by line.</p>
+
+  <h2 id="idea"><span class="num">§</span> What an "AI harness" actually is</h2>
+  <p>An LLM by itself is <strong>stateless text-in, text-out</strong>. You give it words, it gives
+  you words back. It can't remember, can't act, can't use a tool. A <strong>harness</strong> is the
+  runtime that wraps the model and turns it into an <em>agent</em>. Claude Code is a harness. Cursor's
+  agent mode is a harness. ankus is a harness you build yourself so every piece is legible.</p>
+  <p>The minimum a harness must do is three things, and Week 1 builds all three:</p>
+  <ul>
+    <li><strong>Hold the conversation</strong> — track messages as they accumulate (Layer 1).</li>
+    <li><strong>Offer tools</strong> — let the model request actions, and run them (Layer 2).</li>
+    <li><strong>Talk to a model</strong> — translate to whatever LLM you plug in (Layer 3).</li>
+    <li><strong>Loop</strong> — tie it together: ask, run tools, ask again, until done (Layer 4).</li>
+  </ul>
+
+  <h2 id="model"><span class="num">§</span> The mental model — the harness is a loop</h2>
+  <p>Strip away everything and an agent is this. Read it once; the whole week is just the four
+  layers that make these lines possible:</p>
+  <pre><code class="py"><span class="c"># the whole agent, in spirit</span>
+messages = [system_prompt]
+while True:
+    response = provider.complete(messages, tools)   <span class="c"># ask the model</span>
+    messages.append(response)
+    if not response.wants_tools:                     <span class="c"># it just talked → done</span>
+        return response.text
+    for call in response.tool_calls:                 <span class="c"># it ordered tools → run them</span>
+        result = registry.execute(call)
+        messages.append(result)                      <span class="c"># feed the outcome back, loop again</span></code></pre>
+
+  <p>The layers stack bottom-up — each depends only on the one below it:</p>
+  <div class="stack">
+    <b>Layer 4 · Agent loop</b> &nbsp;— orchestrates everything &nbsp;<span class="n">(core/agent.py)</span><br>
+    &nbsp;&nbsp;&nbsp;&uarr; depends on<br>
+    <b>Layer 3 · Provider</b> &nbsp;— talks to the LLM &nbsp;<span class="n">(providers/)</span><br>
+    <b>Layer 2 · Tools + Registry</b> &nbsp;— what the model can DO &nbsp;<span class="n">(tools/)</span><br>
+    &nbsp;&nbsp;&nbsp;&uarr; both depend on<br>
+    <b>Layer 1 · Messages</b> &nbsp;— the shared vocabulary &nbsp;<span class="n">(core/messages.py)</span>
+  </div>
+
+  <!-- ============ LAYER 1 ============ -->
+  <h2 id="l1"><span class="num">1</span> · Messages — the shared vocabulary</h2>
+  <p>Two different LLM APIs (Anthropic and Ollama) describe the <em>same conversation</em> with
+  <em>different</em> JSON shapes. If the loop spoke one API's shape, swapping models would mean
+  rewriting the loop. So ankus invents its <strong>own neutral shape</strong> that everything inside
+  speaks; the providers translate at the edges.</p>
+
+  <div class="box analogy"><span class="lbl">Analogy — a conversation is a list of turns</span>
+  <p>Talking to an agent is like any chat: turn 1 you speak, turn 2 the model "goes to check
+  something," turn 3 the tool answers, turn 4 the model replies. This file defines what
+  <em>one turn</em> looks like in Python. That's all it is.</p></div>
+
+  <p>Three kinds of thing flow through a conversation, so there are three classes:</p>
+
+  <div class="box why"><span class="lbl">Python aside — @dataclass</span>
+  <p><code class="inl">@dataclass</code> auto-writes the boilerplate constructor for a
+  data-holding class. You just declare the fields (<code class="inl">id: str</code>) and Python
+  writes <code class="inl">__init__</code> for you. The <code class="inl">: str</code> is a type
+  <em>hint</em> — documentation, not enforced at runtime.</p></div>
+
+  <h3 id="l1-toolcall">ToolCall — "the model wants to run a tool"</h3>
+  <div class="filetag">core/messages.py</div>
+  <pre><code class="py">@dataclass
+class ToolCall:
+    id: str          <span class="c"># a label, e.g. "c1" — the order-ticket number</span>
+    name: str        <span class="c"># which tool, e.g. "get_current_time"</span>
+    arguments: dict  <span class="c"># what to pass it, e.g. {"timezone": "Asia/Tokyo"}</span></code></pre>
+  <p>The single most important idea in the whole project lives here: <strong>the model can never
+  run anything.</strong> It only produces text. When it "wants" a tool, all it can do is emit a
+  <em>request</em> — a <code class="inl">ToolCall</code>. The harness decides whether and how to
+  actually run it.</p>
+  <div class="box analogy"><span class="lbl">Analogy — ordering at a restaurant</span>
+  <p>You (the model) can't walk into the kitchen and cook. You hand the waiter (the harness) a
+  written order. The <code class="inl">ToolCall</code> is that order ticket. The <code class="inl">id</code>
+  exists because you might order three dishes at once — the ticket number matches each returned
+  plate to its order.</p></div>
+
+  <h3 id="l1-result">ToolResult — "here's what the tool produced"</h3>
+  <div class="filetag">core/messages.py</div>
+  <pre><code class="py">@dataclass
+class ToolResult:
+    tool_call_id: str   <span class="c"># "c1" — matches the ToolCall's id</span>
+    name: str
+    content: str        <span class="c"># "2026-07-14 21:04:50 JST" — the actual answer</span>
+    is_error: bool = False</code></pre>
+  <p>The plate coming back from the kitchen. <code class="inl">tool_call_id</code> carries the same
+  ticket number so everyone knows which order it answers.</p>
+  <div class="box why"><span class="lbl">Why is_error matters</span>
+  <p>If the kitchen is out of an ingredient, the waiter comes back and says "sorry, here's why"
+  instead of throwing the plate on the floor (crashing). <code class="inl">is_error=True</code> lets
+  the model <em>see</em> the failure and adapt. This is why an agent doesn't crash when a tool fails
+  — the failure is just another message. Remember this; it comes up in every layer.</p></div>
+
+  <h3 id="l1-message">Message — "one turn in the conversation"</h3>
+  <div class="filetag">core/messages.py</div>
+  <pre><code class="py">@dataclass
+class Message:
+    role: Role                        <span class="c"># WHO: "system" | "user" | "assistant" | "tool"</span>
+    text: str = ""                    <span class="c"># WHAT they said (plain words)</span>
+    tool_calls: list[ToolCall] = ...  <span class="c"># only the assistant fills this (its orders)</span>
+    tool_call_id: str | None = None   <span class="c"># only "tool" turns</span>
+    name: str | None = None
+    is_error: bool = False</code></pre>
+  <p>The <code class="inl">role</code> says <em>who is speaking</em>: <code class="inl">system</code>
+  (the standing instructions), <code class="inl">user</code> (the human), <code class="inl">assistant</code>
+  (the AI), <code class="inl">tool</code> (a result coming back). A complete conversation is just a
+  Python list of these — <strong>that list is the agent's entire memory</strong>:</p>
+  <pre><code class="py">messages = [
+    Message(role="system",    text="You are a concise assistant."),
+    Message(role="user",      text="What time is it in Tokyo?"),
+    Message(role="assistant", tool_calls=[ToolCall(id="c1", name="get_current_time",
+                                                   arguments={"timezone": "Asia/Tokyo"})]),
+    Message(role="tool",      text="2026-07-14 21:04:50 JST", tool_call_id="c1"),
+    Message(role="assistant", text="It's 9:04 PM in Tokyo."),
+]</code></pre>
+
+  <div class="box why"><span class="lbl">The empty-text tool call</span>
+  <p>Notice the third message: <code class="inl">text</code> is empty, <code class="inl">tool_calls</code>
+  is filled. That's the model <em>placing an order</em>, not talking to the human. An assistant turn
+  can talk, act, or <em>both</em> — which is why <code class="inl">Message</code> has both a
+  <code class="inl">text</code> field and a <code class="inl">tool_calls</code> field. The one question
+  the loop ever asks is: <em>"are there any tool_calls?"</em> — that's the property
+  <code class="inl">wants_tools</code>, the hinge of the entire agent.</p></div>
+
+  <!-- ============ LAYER 2 ============ -->
+  <h2 id="l2"><span class="num">2</span> · Tools — what the model can actually DO</h2>
+  <p>A model alone only produces text. Tools are how it touches the world. Layer 2 answers the
+  question Layer 1 left open: when the model places an order like
+  <code class="inl">ToolCall(name="get_current_time")</code>, who cooks it, and how does the model
+  know what's on the menu?</p>
+
+  <h3 id="l2-contract">A tool is a thing with 4 parts</h3>
+  <div class="filetag">tools/base.py</div>
+  <pre><code class="py">class Tool(ABC):
+    name: str          <span class="c"># how the model refers to it</span>
+    description: str    <span class="c"># the model READS this to decide WHEN to use it</span>
+    input_schema: dict  <span class="c"># JSON Schema — tells the model what arguments are valid</span>
+    def run(self, arguments: dict) -> str: ...  <span class="c"># the actual work</span></code></pre>
+  <div class="box analogy"><span class="lbl">Analogy — a dish on a menu</span>
+  <p><b>name</b> = the dish's name · <b>description</b> = the menu blurb (so you know when to order
+  it) · <b>input_schema</b> = the customization options · <b>run()</b> = the kitchen that cooks it.
+  Every tool in ankus has exactly these four parts. <code class="inl">ABC</code> ("Abstract Base
+  Class") makes <code class="inl">Tool</code> a fill-in-the-blank template you can't create directly
+  — a safety net guaranteeing every real tool has all four parts.</p></div>
+  <div class="box why"><span class="lbl">The description is prompt engineering, not a comment</span>
+  <p>The model literally reads <code class="inl">description</code> to decide whether a tool fits the
+  task. A vague description = a confused model. It's the most important string you write for a tool.</p></div>
+
+  <h3 id="l2-decorator">The @tool decorator — write a function, get a tool</h3>
+  <div class="filetag">tools/builtin/clock.py</div>
+  <pre><code class="py">@tool()
+def get_current_time(timezone: str = "UTC") -> str:
+    """Return the current date and time in the given IANA timezone."""
+    ...</code></pre>
+  <p>That one <code class="inl">@tool()</code> line reads the function's <em>signature</em> and builds
+  all four parts automatically:</p>
+  <pre><code class="py">get_current_time.name          <span class="c"># "get_current_time"   (the function name)</span>
+get_current_time.description   <span class="c"># the docstring</span>
+get_current_time.input_schema  <span class="c"># {"type": "object",</span>
+                              <span class="c">#  "properties": {"timezone": {"type": "string"}}}</span>
+                              <span class="c"># no "required": timezone has a default → optional</span></code></pre>
+  <div class="box why"><span class="lbl">The rule</span>
+  <p>A parameter <em>without</em> a default becomes <code class="inl">required</code>; <em>with</em> a
+  default it's optional. The Python type hint (<code class="inl">str</code>) maps to the JSON type
+  (<code class="inl">"string"</code>). You write a normal function; you get a model-callable tool.</p></div>
+
+  <h3 id="l2-registry">The registry — the switchboard</h3>
+  <p>At heart the registry is <strong>one dictionary: name → Tool</strong>. It does two jobs.</p>
+  <div class="filetag">tools/registry.py</div>
+  <pre><code class="py">def schemas(self):            <span class="c"># JOB 1: hand the model the MENU</span>
+    return [{"name": t.name, "description": t.description,
+             "input_schema": t.input_schema} for t in self._tools.values()]
+
+def execute(self, call):      <span class="c"># JOB 2: run an order — and NEVER crash</span>
+    tool = self._tools.get(call.name)
+    if tool is None:                             <span class="c"># model hallucinated a tool name</span>
+        return ToolResult(..., content="Unknown tool...", is_error=True)
+    try:
+        content = tool.run(call.arguments)       <span class="c"># success</span>
+        return tool.to_result(call.id, content)
+    except Exception as exc:                     <span class="c"># tool threw (e.g. bad timezone)</span>
+        return tool.to_result(call.id, f"{exc}", is_error=True)</code></pre>
+  <div class="box why"><span class="lbl">The most important property in Layer 2 — execute NEVER raises</span>
+  <p>If a tool crashes, that would crash the whole agent — one bad call throws away the entire
+  conversation. Instead, <code class="inl">execute</code> catches <em>any</em> failure and turns it
+  into an error <code class="inl">ToolResult</code>. The failure becomes just another message the
+  model sees and can recover from. <strong>In an agent, errors are not exceptions to crash on — they
+  are observations to feed back.</strong></p></div>
+
+  <!-- ============ LAYER 3 ============ -->
+  <h2 id="l3"><span class="num">3</span> · Providers — the translator / firewall</h2>
+  <p>Inside ankus everything speaks the neutral <code class="inl">Message</code> language. But the
+  actual LLM doesn't — Claude wants one JSON shape, Ollama wants another. A <strong>Provider</strong>
+  is the translator that sits at the border. It does exactly one job:</p>
+  <div class="filetag">providers/base.py</div>
+  <pre><code class="py">class Provider(ABC):
+    @abstractmethod
+    def complete(self, messages: list[Message], tools: list[dict]) -> Message: ...
+    <span class="c"># neutral conversation + neutral menu  →  call the backend  →  one neutral reply</span></code></pre>
+  <p>Read the signature as a sentence: take the whole conversation and the tool menu, call the model,
+  return one assistant <code class="inl">Message</code>. <strong>Neutral in, neutral out.</strong> The
+  agent loop never imports <code class="inl">anthropic</code>, never talks HTTP — it only ever calls
+  <code class="inl">provider.complete(...)</code>.</p>
+
+  <p>The same neutral tool-result becomes two completely different native shapes — and the loop above
+  never sees either one:</p>
+  <pre><code class="py"><span class="c"># SAME neutral input:</span>
+Message(role="tool", text="2:30 PM", tool_call_id="c1", name="get_current_time")
+
+<span class="c"># OllamaProvider turns it into:            AnthropicProvider turns it into:</span>
+{"role": "tool",                        {"role": "user", "content": [
+ "content": "2:30 PM",                     {"type": "tool_result",
+ "tool_name": "get_current_time"}           "tool_use_id": "c1",
+                                            "content": "2:30 PM"}]}
+<span class="c"># (matched by ORDER)                       (matched by ID, folded into a user turn)</span></code></pre>
+
+  <div class="box why"><span class="lbl">Why the neutral format exists — the whole architecture in one idea</span>
+  <p>The neutral <code class="inl">Message</code> is a <strong>firewall</strong>. Provider
+  differences are quarantined inside each provider's translate helpers. Everything above — the loop,
+  tools, permissions, hooks — lives in a world with <em>one</em> message format. To add a new backend
+  (OpenAI, a local Llama), you write <em>one file</em> and change nothing else. That's what
+  "provider-agnostic" means in code, not slides. (This is the classic <em>Adapter pattern</em>.)</p></div>
+
+  <!-- ============ LAYER 4 ============ -->
+  <h2 id="l4"><span class="num">4</span> · The Loop — tying it together</h2>
+  <p>Now the loop reads almost trivially, <em>because Layers 1–3 did all the hard work</em>. The whole
+  agent is ~7 real lines:</p>
+  <div class="filetag">core/agent.py</div>
+  <pre><code class="py">def run(self, user_message):
+    self.messages.append(Message.user(user_message))         <span class="c"># record the human turn</span>
+
+    for _ in range(self.max_steps):                          <span class="c"># safety rail vs infinite loops</span>
+        response = self.provider.complete(self.messages, self.registry.schemas())  <span class="c"># ① ask</span>
+        self.messages.append(response)                       <span class="c"># ② remember</span>
+
+        if not response.wants_tools:                         <span class="c"># ③ done?</span>
+            return response.text                             <span class="c">#    no tools → final answer</span>
+
+        for call in response.tool_calls:                     <span class="c"># ④ run each tool, feed back</span>
+            result = self.registry.execute(call)
+            self.messages.append(Message.from_tool_result(result))</code></pre>
+  <p>Four beats: <strong>① ask</strong> (Layer 3 hides all translation) · <strong>② remember</strong>
+  · <strong>③ the <code class="inl">wants_tools</code> hinge</strong> (return, or continue) ·
+  <strong>④ run tools</strong> (Layer 2, never crashes) and append results (Layer 1). Then loop — and
+  now the model can <em>see</em> the tool results in <code class="inl">self.messages</code>.</p>
+  <div class="box why"><span class="lbl">Why the loop is so short</span>
+  <p>Complexity was pushed <em>down</em> into well-named, single-purpose modules, so the thing on top
+  reads like plain English. The loop is the conductor; the layers are the orchestra. Permissions and
+  hooks (Week 3) slot into the two marked points — before <code class="inl">execute</code>, and around
+  each step — <em>without changing this shape</em>. <code class="inl">max_steps</code> caps a runaway
+  agent that never stops calling tools.</p></div>
+
+  <!-- ============ TRACE ============ -->
+  <h2 id="trace"><span class="num">▶</span> One request, traced</h2>
+  <p>Now watch all four layers move together. You run
+  <code class="inl">agent.run("What is the current time in Tokyo?")</code>. The memory list grows from
+  1 message to 5:</p>
+
+  <div class="trace">
+    <div class="row"><div class="role system">system</div><div class="body">"You are a concise assistant…" <span class="n">— seeded when the Agent was built (1 msg)</span></div></div>
+    <div class="row"><div class="role user">user</div><div class="body">"What is the current time in Tokyo?" <span class="n">— added by run() (2 msgs). Enter the loop.</span></div></div>
+    <div class="row"><div class="role assistant">assistant</div><div class="body">① Provider translates the 2 messages + menu → native → calls Qwen → back to neutral. Model returns: <code class="inl">get_current_time({timezone:"Asia/Tokyo"})</code>. <span class="n">③ wants_tools? YES → don't return (3 msgs)</span></div></div>
+    <div class="row"><div class="role tool">tool</div><div class="body">④ <code class="inl">registry.execute</code> runs clock.py → "2026-07-14 21:04:50 JST", appended. <span class="n">Loop back to ① (4 msgs)</span></div></div>
+    <div class="row"><div class="role assistant">assistant</div><div class="body">① Ask AGAIN — now the model <em>sees</em> the tool result → writes "It's 9:04 PM in Tokyo." with no tool call. <span class="n">③ wants_tools? NO → return ✅ (5 msgs)</span></div></div>
+  </div>
+
+  <div class="box proof"><span class="lbl">Proven live on Qwen 2.5 7B (your RTX 2060)</span>
+  <p>A local 7-billion-parameter model, given only the tool <em>schema</em> (not even told about the
+  tool in the system prompt), decided on its own to call <code class="inl">get_current_time</code>,
+  picked the correct IANA timezone <code class="inl">Asia/Tokyo</code>, read the result, and answered.
+  The <strong>same agent code</strong> runs on Claude by swapping one line — the provider object.</p></div>
+
+  <div class="box why"><span class="lbl">This is what makes it an agent, not a Q&amp;A box</span>
+  <p>The model "thought" across <em>two</em> turns: turn 1 = "I need data, fetch it"; turn 2 = "now I
+  have it, here's the answer." The loop stitched them together by feeding the tool result back. That
+  feedback — append the result, ask again — <em>is</em> the agent.</p></div>
+
+  <!-- ============ RECAP ============ -->
+  <h2 id="recap"><span class="num">✦</span> The big ideas of Week 1</h2>
+  <ul>
+    <li><strong>A conversation is a growing <code class="inl">list[Message]</code></strong> — the
+    agent's only memory. Everything reads it or appends to it.</li>
+    <li><strong>The model can only <em>request</em> tools</strong> (a <code class="inl">ToolCall</code>),
+    never run them. That separation is what makes permissions possible later.</li>
+    <li><strong>Errors are observations, not crashes</strong> — <code class="inl">execute</code> turns
+    every failure into a result the model can adapt to.</li>
+    <li><strong>The neutral format is a firewall</strong> — provider quirks are quarantined in
+    adapters, so the model backend is swappable in one line.</li>
+    <li><strong>Push complexity down</strong> — the loop stays ~15 lines because every hard thing
+    lives in a well-named module beneath it.</li>
+  </ul>
+
+  <div class="next"><span class="lbl">Next</span>
+  <strong>Week 2 — Tools &amp; the Workspace sandbox.</strong> The harness gains 8 real tools (read
+  files, run shell, run Python, search the web) and a fence that keeps file tools inside one folder —
+  plus the moment a weak model <em>recovers from its own error</em> live. Then Week 3 adds permissions
+  and hooks.</div>
+
+  <footer>ankus · Week 1 walkthrough · self-contained · lives in <code class="inl">docs/breakdown/</code>.
+  Companion to <code class="inl">walking-skeleton.md</code>. The code is currently named
+  <code class="inl">cornac</code> (rename to <code class="inl">ankus</code> in progress).</footer>
+</main>
+</div>
+</body>
+</html>
