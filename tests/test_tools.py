@@ -238,3 +238,17 @@ def test_registry_names_and_tools_follow_registration_order(ws):
     assert all(x is y for x, y in zip(reg.tools(), [a, b, c])) and len(reg.tools()) == 3
     assert reg.names() == [s["name"] for s in reg.schemas()]
     assert ToolRegistry().names() == [] and ToolRegistry().tools() == []
+
+
+# --- the ladder's round-two write_file ------------------------------------------------
+
+def test_round_two_write_file_roundtrips_and_reports_only_the_size(ws):
+    # Level 3 of benchmark/ladder builds write_file with the gate and the report off:
+    # the tool as it was in round two. It still writes what it is given and still
+    # stays inside the sandbox; only what it says about it changes. The full set of
+    # flag tests is in tests/test_edit_file.py.
+    tool = WriteFile(ws, syntax_gate=False, change_report=False)
+    assert tool.run({"path": "hello.txt", "content": "hi"}) == "wrote hello.txt: 2 chars"
+    assert ReadFile(ws).run({"path": "hello.txt"}) == "hi"
+    with pytest.raises(WorkspaceError):
+        tool.run({"path": "../escape.txt", "content": "x"})

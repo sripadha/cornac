@@ -614,3 +614,186 @@ def test_example_policy_yaml_loads_and_asks_before_edit_file():
     policy = Policy.from_yaml("examples/cornac.policy.yaml")
     call = ToolCall("1", "edit_file", {"path": "a.py", "old": "x", "new": "y"})
     assert policy.check(call) == Decision.ASK
+
+
+# --- the ladder flags: syntax_gate and change_report -------------------------------------
+#
+# benchmark/ladder measures the gate and the report by switching them OFF at level 3
+# (the round-two harness) and on at level 4. These tests pin what each flag does and
+# does not change, and that the defaults are today's tool byte for byte — including
+# the description the model reads, which has to describe the instance it belongs to.
+
+WRITE_FILE_DESCRIPTION_ROUND3 = (
+    "Write text to a file in the workspace, creating parent directories as needed. "
+    "Overwrites the WHOLE file if it exists, so to change a few lines of an existing "
+    "file use edit_file instead. For a .py path the content must parse as Python or "
+    "the write is refused and the file left unchanged. The result says whether the "
+    "file was created or overwritten, its size before and after, and (for .py) any "
+    "top-level functions or classes that disappeared. Paths are relative to the "
+    "workspace root."
+)
+
+EDIT_FILE_DESCRIPTION_ROUND3 = (
+    "Replace ONE exact snippet of text in a file with new text, leaving the rest of "
+    "the file untouched. This is the preferred way to change a few lines; use "
+    "write_file only to create a file or replace all of it. `old` must match the "
+    "file text exactly, including indentation and line breaks, and must occur "
+    "exactly once (include a neighbouring line or two to make it unique). For a "
+    ".py path the edited file must still parse as Python or the edit is refused "
+    "and the file left unchanged. Paths are relative to the workspace root."
+)
+
+# Round two's write_file description (git: cornac/tools/builtin/files.py before Week
+# 4b), verbatim. Level 3 of the ladder must read this, not a text that points at an
+# edit_file the level does not have.
+WRITE_FILE_DESCRIPTION_ROUND2 = (
+    "Write text to a file in the workspace, creating parent directories as needed. "
+    "Overwrites if the file exists. Paths are relative to the workspace root."
+)
+
+
+def test_flags_default_on_and_are_exposed(ws):
+    w, e = WriteFile(ws), EditFile(ws)
+    assert (w.syntax_gate, w.change_report, e.syntax_gate) == (True, True, True)
+    off = WriteFile(ws, syntax_gate=False, change_report=False)
+    assert (off.syntax_gate, off.change_report) == (False, False)
+    assert EditFile(ws, syntax_gate=False).syntax_gate is False
+
+
+def test_default_descriptions_are_round_three_byte_for_byte(ws):
+    # Class and instance agree, and both are the text round three was measured with.
+    assert WriteFile.description == WRITE_FILE_DESCRIPTION_ROUND3
+    assert WriteFile(ws).description == WRITE_FILE_DESCRIPTION_ROUND3
+    assert EditFile.description == EDIT_FILE_DESCRIPTION_ROUND3
+    assert EditFile(ws).description == EDIT_FILE_DESCRIPTION_ROUND3
+
+
+def test_both_flags_off_is_the_round_two_description(ws):
+    # No gate promised, no report promised, and no edit_file to point at.
+    off = WriteFile(ws, syntax_gate=False, change_report=False)
+    assert off.description == WRITE_FILE_DESCRIPTION_ROUND2
+    assert "edit_file" not in off.description
+
+
+def test_each_flag_removes_only_its_own_sentence(ws):
+    no_gate = WriteFile(ws, syntax_gate=False).description
+    assert "must parse as Python" not in no_gate
+    assert "created or overwritten" in no_gate and "edit_file" in no_gate
+
+    no_report = WriteFile(ws, change_report=False).description
+    assert "created or overwritten" not in no_report
+    assert "must parse as Python" in no_report and "edit_file" in no_report
+
+    no_edit_gate = EditFile(ws, syntax_gate=False).description
+    assert "must still parse as Python" not in no_edit_gate
+    assert no_edit_gate.startswith("Replace ONE exact snippet")
+    assert no_edit_gate.endswith("Paths are relative to the workspace root.")
+
+
+def test_the_registry_hands_the_provider_the_instance_description(ws):
+    # schemas() is what the provider serialises for the model; it must carry the
+    # description of the tool as built, not the class default.
+    reg = ToolRegistry([WriteFile(ws, syntax_gate=False, change_report=False), EditFile(ws, syntax_gate=False)])
+    write_schema, edit_schema = reg.schemas()
+    assert write_schema["description"] == WRITE_FILE_DESCRIPTION_ROUND2
+    assert "parse as Python" not in edit_schema["description"]
+
+
+def test_default_tools_build_the_scaffolded_tools(ws):
+    by_name = {t.name: t for t in default_tools(ws)}
+    assert (by_name["write_file"].syntax_gate, by_name["write_file"].change_report) == (True, True)
+    assert by_name["edit_file"].syntax_gate is True
+
+
+# write_file with the gate off
+
+def test_gate_off_writes_a_broken_py_as_round_two_did(ws):
+    out = WriteFile(ws, syntax_gate=False).run({"path": "utils.py", "content": UTILS_PY_BROKEN})
+    assert read(ws, "utils.py") == UTILS_PY_BROKEN          # on disk, broken
+    # The report is still on: sizes, but no REMOVED line, because the comparison
+    # needs both sides to parse and the new one does not (see _removed_top_level).
+    assert out == f"overwrote utils.py: {len(UTILS_PY)} -> {len(UTILS_PY_BROKEN)} chars"
+    assert "Error" not in out and "SyntaxError" not in out
+
+
+def test_gate_off_creates_a_broken_new_py_and_its_parent(ws):
+    out = WriteFile(ws, syntax_gate=False).run({"path": "pkg/new.py", "content": "def f(:\n    pass\n"})
+    assert out == "created pkg/new.py: 17 chars"
+    assert read(ws, "pkg/new.py") == "def f(:\n    pass\n"
+
+
+def test_gate_off_still_refuses_a_directory(ws):
+    # Not scaffolding: writing text over a directory is an error in any harness.
+    (ws.root / "pkg").mkdir()
+    out = WriteFile(ws, syntax_gate=False, change_report=False).run({"path": "pkg", "content": "x"})
+    assert out == "Error: is a directory: pkg"
+    assert (ws.root / "pkg").is_dir()
+
+
+# write_file with the report off
+
+def test_report_off_says_wrote_and_the_size_and_nothing_else(ws):
+    # The round-two message over the round-two disaster: two functions gone, and
+    # the tool says how many characters landed. That silence is what level 3 pays for.
+    out = WriteFile(ws, change_report=False).run({"path": "utils.py", "content": UTILS_PY_TRUNCATED})
+    assert out == f"wrote utils.py: {len(UTILS_PY_TRUNCATED)} chars"
+    assert "REMOVED" not in out and "overwrote" not in out
+    assert read(ws, "utils.py") == UTILS_PY_TRUNCATED
+
+
+def test_report_off_uses_the_same_verb_for_a_new_file(ws):
+    out = WriteFile(ws, change_report=False).run({"path": "sub/dir/new.txt", "content": "abc"})
+    assert out == "wrote sub/dir/new.txt: 3 chars"           # not "created"
+    assert read(ws, "sub/dir/new.txt") == "abc"
+
+
+def test_report_off_keeps_the_gate(ws):
+    # The flags are independent: no report does not mean no gate.
+    before = (ws.root / "utils.py").read_bytes()
+    out = WriteFile(ws, change_report=False).run({"path": "utils.py", "content": UTILS_PY_BROKEN})
+    assert out.startswith("Error:") and "SyntaxError" in out
+    assert (ws.root / "utils.py").read_bytes() == before
+
+
+def test_report_off_does_not_read_the_old_file(ws):
+    # Round two's tool never looked at what it was replacing. With the report off
+    # neither does this one — so a file it cannot decode is no obstacle to writing.
+    (ws.root / "lat.py").write_bytes(b"# caf\xe9\nx = 1\n")    # latin-1, not UTF-8
+    out = WriteFile(ws, change_report=False).run({"path": "lat.py", "content": "x = 2\n"})
+    assert out == "wrote lat.py: 6 chars"
+    assert (ws.root / "lat.py").read_bytes() == b"x = 2\n"
+
+
+# both off: level 3
+
+def test_both_off_is_the_round_two_tool(ws):
+    tool = WriteFile(ws, syntax_gate=False, change_report=False)
+    out = tool.run({"path": "utils.py", "content": UTILS_PY_BROKEN})
+    assert out == f"wrote utils.py: {len(UTILS_PY_BROKEN)} chars"
+    assert read(ws, "utils.py") == UTILS_PY_BROKEN
+    # The valid write is reported the same way: the round-two tool had one message.
+    assert tool.run({"path": "utils.py", "content": UTILS_PY}) == f"wrote utils.py: {len(UTILS_PY)} chars"
+
+
+# edit_file with the gate off
+
+def test_edit_file_gate_off_applies_an_edit_that_breaks_the_file(ws):
+    out = EditFile(ws, syntax_gate=False).run({
+        "path": "utils.py",
+        "old": '"""Arithmetic mean of a non-empty sequence of numbers."""\n    return',
+        "new": '"""Arithmetic mean of a non-empty sequence of numbers."""    return',
+    })
+    assert out == "edited utils.py: replaced 1 occurrence (lines 15-15)"
+    assert read(ws, "utils.py") == UTILS_PY_BROKEN
+
+
+def test_edit_file_gate_off_keeps_every_other_check(ws):
+    # Only the compile check is a flag. Not-found, ambiguity and the no-op guard are
+    # what makes edit_file an edit tool at all, and stay on.
+    tool = EditFile(ws, syntax_gate=False)
+    assert tool.run({"path": "utils.py", "old": "def median(", "new": "x"}).startswith("Error: `old` not found")
+    assert tool.run({"path": "utils.py", "old": "closed interval", "new": "x"}).startswith("Error: `old` occurs 2 times")
+    assert tool.run({"path": "utils.py", "old": "return lo < x < hi", "new": "return lo < x < hi"}).startswith(
+        "Error: old and new are identical"
+    )
+    assert read(ws, "utils.py") == UTILS_PY

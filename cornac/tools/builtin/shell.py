@@ -20,6 +20,17 @@ nothing said the command already starts in the workspace, and one model "fixed" 
 function inside a run_python snippet and believed the file on disk had changed. So
 the description says where the command runs and that running code does not edit
 files — edit_file (a few lines) or write_file (the whole file) does.
+
+Those two sentences are Week 4b scaffolding, and they name tools. The capability
+ladder (benchmark/ladder) runs this tool at levels where neither edit_file nor
+write_file exists (level 2 has the shell and nothing else; level 3 is the round-two
+tool set, which had no edit_file), and a model told about a tool it does not have
+calls a tool that does not exist ("Unknown tool" from the registry) — or, worse,
+believes the one tool it has cannot change a file, when at level 2 the shell IS the
+editor (sed -i, a heredoc redirect). So the description follows the instance, the
+way write_file's does (files.py): `edit_hint=False` gives round two's description
+verbatim, with no cwd sentence and no edit sentence, and the default keeps today's
+text byte for byte.
 """
 
 from __future__ import annotations
@@ -40,24 +51,41 @@ HEAD_CHARS = 40_000   # chars kept from the start of combined stdout+stderr
 TAIL_CHARS = 10_000   # chars kept from the end
 
 
+# The description in two forms. ROUND2 is the text the round-two spike measured with
+# (git c381aed, before Week 4b), verbatim. ROUND3 adds the two sentences the module
+# docstring explains, and is what the tool ships with today.
+RUN_BASH_DESCRIPTION_ROUND2 = (
+    "Run a bash command from the workspace root and return its combined "
+    "stdout/stderr and exit code. Use for running tests, git, build tools, etc."
+)
+RUN_BASH_DESCRIPTION_ROUND3 = (
+    "Run a bash command in the workspace root and return its combined "
+    "stdout/stderr and exit code. Use for running tests, git, build tools, etc. "
+    "The command already starts in the workspace (no cd needed). Running a "
+    "command does NOT edit source files: to change a file use edit_file (a few "
+    "lines) or write_file (the whole file)."
+)
+
+
 class RunBash(Tool):
     name = "run_bash"
-    description = (
-        "Run a bash command in the workspace root and return its combined "
-        "stdout/stderr and exit code. Use for running tests, git, build tools, etc. "
-        "The command already starts in the workspace (no cd needed). Running a "
-        "command does NOT edit source files: to change a file use edit_file (a few "
-        "lines) or write_file (the whole file)."
-    )
+    description = RUN_BASH_DESCRIPTION_ROUND3
     input_schema = {
         "type": "object",
         "properties": {"command": {"type": "string", "description": "the bash command to run"}},
         "required": ["command"],
     }
 
-    def __init__(self, workspace: Workspace, timeout: float = DEFAULT_TIMEOUT):
+    def __init__(self, workspace: Workspace, timeout: float = DEFAULT_TIMEOUT, edit_hint: bool = True):
+        """`edit_hint` False gives the model round two's description: no sentence
+        about where the command runs and none naming edit_file/write_file (see the
+        module docstring). It changes the description only; the tool runs the same."""
         self.ws = workspace
         self.timeout = timeout
+        self.edit_hint = edit_hint
+        # Set on the instance so ToolRegistry.schemas() (which reads the instance)
+        # hands the provider the text that describes THIS tool, as files.py does.
+        self.description = RUN_BASH_DESCRIPTION_ROUND3 if edit_hint else RUN_BASH_DESCRIPTION_ROUND2
 
     def run(self, arguments: dict) -> str:
         command = arguments["command"]

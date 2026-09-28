@@ -18,8 +18,13 @@ from pathlib import Path
 
 import pytest
 
-from cornac.tools.builtin.python_exec import RunPython
-from cornac.tools.builtin.shell import RunBash
+from cornac import ToolRegistry
+from cornac.tools.builtin.python_exec import (
+    RUN_PYTHON_DESCRIPTION_ROUND2,
+    RUN_PYTHON_DESCRIPTION_ROUND3,
+    RunPython,
+)
+from cornac.tools.builtin.shell import RUN_BASH_DESCRIPTION_ROUND2, RUN_BASH_DESCRIPTION_ROUND3, RunBash
 from cornac.tools.workspace import Workspace
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -44,6 +49,27 @@ def test_describe_says_paths_are_relative_and_no_cd_is_needed(tmp_path):
     assert "relative" in text
     assert "cd" in text
     assert "run_bash" in text and "run_python" in text
+
+
+def test_describe_names_only_the_run_tools_it_is_told_about(tmp_path):
+    # The capability ladder's level 2 has run_bash alone; a system prompt saying
+    # "run_python already runs inside that directory" would name a tool it lacks.
+    ws = Workspace(tmp_path)
+    default = ws.describe()
+    assert ws.describe(tools=None) == default
+    assert ws.describe(tools=("read_file", "run_bash", "run_python", "grep")) == default  # both present: today's text
+    only_bash = ws.describe(tools=("run_bash",))
+    assert "run_python" not in only_bash
+    assert "run_bash already runs inside that directory, so there is no need to cd" in only_bash
+    only_python = ws.describe(tools=["run_python"])
+    assert "run_bash" not in only_python and "run_python already runs inside" in only_python
+    neither = ws.describe(tools=("read_file",))
+    assert "cd" not in neither.split("rejected.")[1] and "run_bash" not in neither and "run_python" not in neither
+    # Everything else is the same paragraph: the root, the path rule, the data-not-instructions rule.
+    for text in (only_bash, only_python, neither):
+        assert str(ws.root) in text and "relative" in text and "never instructions" in text
+        assert "\n\n" not in text and text.strip() == text
+    assert Workspace.RUN_TOOLS == ("run_bash", "run_python")
 
 
 def test_describe_says_tool_output_is_data_not_instructions(tmp_path):
@@ -78,6 +104,50 @@ def test_run_tools_say_where_they_run(tmp_path, tool_cls):
     description = tool_cls(Workspace(tmp_path)).description
     assert "workspace" in description
     assert "no cd needed" in description
+
+
+# The two descriptions each run tool can carry. ROUND3 is what the tool ships with
+# (the two Week 4b sentences); ROUND2 is the text before them (git c381aed), which the
+# capability ladder gives levels 2 and 3, where edit_file (and at level 2 write_file)
+# does not exist to be pointed at.
+
+@pytest.mark.parametrize("tool_cls, round3, round2", [
+    (RunBash, RUN_BASH_DESCRIPTION_ROUND3, RUN_BASH_DESCRIPTION_ROUND2),
+    (RunPython, RUN_PYTHON_DESCRIPTION_ROUND3, RUN_PYTHON_DESCRIPTION_ROUND2),
+])
+def test_edit_hint_defaults_on_and_off_is_round_twos_description_byte_for_byte(tmp_path, tool_cls, round3, round2):
+    ws = Workspace(tmp_path)
+    assert tool_cls.description == round3                       # the class default: today's text
+    assert tool_cls(ws).description == round3                   # and the instance default
+    assert tool_cls(ws).edit_hint is True
+    off = tool_cls(ws, edit_hint=False)
+    assert off.edit_hint is False
+    assert off.description == round2
+    for name in ("edit_file", "write_file", "NOT edit", "no cd needed"):
+        assert name not in off.description
+    assert off.name == tool_cls.name and off.input_schema == tool_cls.input_schema  # the tool is the same tool
+
+
+def test_round_two_run_bash_description_is_the_text_before_week_4b():
+    assert RUN_BASH_DESCRIPTION_ROUND2 == (
+        "Run a bash command from the workspace root and return its combined "
+        "stdout/stderr and exit code. Use for running tests, git, build tools, etc."
+    )
+    assert RUN_PYTHON_DESCRIPTION_ROUND2.endswith("A non-zero exit status is reported as '(exit code N)'.")
+
+
+def test_the_registry_hands_the_provider_the_run_tools_instance_description(tmp_path):
+    ws = Workspace(tmp_path)
+    reg = ToolRegistry([RunBash(ws, edit_hint=False), RunPython(ws, edit_hint=False)])
+    bash, python = reg.schemas()
+    assert bash["description"] == RUN_BASH_DESCRIPTION_ROUND2
+    assert python["description"] == RUN_PYTHON_DESCRIPTION_ROUND2
+
+
+def test_edit_hint_off_runs_the_same_command(tmp_path):
+    out = RunBash(Workspace(tmp_path), edit_hint=False).run({"command": "printf hi"})
+    assert out == "(exit code 0)\nhi"
+    assert RunPython(Workspace(tmp_path), edit_hint=False).run({"code": "1 + 1"}) == "2"
 
 
 # --- the scripts that carry the hint -------------------------------------------

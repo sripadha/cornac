@@ -124,6 +124,15 @@ Every one of these is, again, a branch inside the loop above, not a new loop:
     The 12/27 -> 26/27 result came partly from being honest about failure, and the
     wrap-up keeps that: the run is declared unfinished by the harness, and the model
     is told in so many words not to claim a success it did not earn.
+
+The capability ladder (benchmark/ladder) runs this loop with its guards switched OFF
+as well as on, to measure what each one is worth: the same frozen model at level 2
+gets max_nudges=0, repeat_note=False, max_repeats=0, wrap_up=False and
+context_window=0 — the Week 1 loop with a policy — and level 4 turns them all on.
+For that to be a fair comparison every guard needs a knob, and `repeat_note` is the
+one the ladder added: with it False the loop still counts identical calls (the Week
+4c hard stop reads that count) but never appends the Week 4b note. Nothing else
+changes, so the difference between the two rows is the guards and only the guards.
 """
 
 from __future__ import annotations
@@ -288,6 +297,7 @@ class Agent:
         approver: Approver | None = None,
         hooks: HookBus | None = None,
         max_nudges: int = 1,
+        repeat_note: bool = True,
         max_repeats: int = 3,
         wrap_up: bool = True,
         context_window: int | None = None,
@@ -300,6 +310,10 @@ class Agent:
         self.approver = approver    # None -> an ASK is treated as DENY (safe default)
         self.hooks = hooks or HookBus()
         self.max_nudges = max_nudges  # continue nudges per run(); 0 disables them
+        # Append the Week 4b repeated-call note to a result the model has seen before?
+        # False keeps the COUNT (max_repeats needs it) and drops only the note: the
+        # ladder's way to run the loop without this guard while keeping that one.
+        self.repeat_note = repeat_note
         self._repeats: dict = {}      # per-run (tool, args) -> (last result, count)
         # per-run id(tool Message) -> its key in _repeats, so context clearing can
         # forget the streak of a result it has just removed (see _forget_repeat).
@@ -760,16 +774,22 @@ class Agent:
         This sits after _handle_call, so a refused call that keeps being asked for is
         counted the same way as one that ran.
 
+        With repeat_note False (levels 2 and 3 of the ladder) the counting is the
+        same and the note is never appended: the model gets the bare result, as it
+        did before Week 4b, and the hard stop still gets its count.
+
         Every result passes through here, noted or not, so this is also where a
         tool's own output loses any "[cornac]" it happens to contain — before the
-        loop adds a note that starts with one.
+        loop adds a note that starts with one. That rewrite is not switched off with
+        the note: it protects the channel the note travels in, and the channel is
+        there whether or not the loop is currently saying anything in it.
         """
         result = replace(result, content=_neutralise_marker(result.content))
         key = self._repeat_key(call)
         last_content, count = self._repeats.get(key, (None, 0))
         count = count + 1 if result.content == last_content else 1
         self._repeats[key] = (result.content, count)  # the bare content, before any note
-        if count < 2:
+        if count < 2 or not self.repeat_note:
             return result, count
         return replace(result, content=result.content + REPEAT_NOTE.format(n=count)), count
 

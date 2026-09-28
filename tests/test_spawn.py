@@ -974,59 +974,64 @@ def test_the_digest_gets_the_whole_room_when_there_is_no_summary():
     assert SUMMARY_LABEL not in text
 
 
-# --- The Week 4c settings a child inherits -------------------------------------------------
+# --- The loop settings a child inherits ----------------------------------------------------
 
 class KnobbedAgent(Agent):
-    """An Agent with the Week 4c settings, whichever week the real one is from.
+    """An Agent with the inherited settings, whichever week the real one is from.
 
     spawn.py builds children from its module-level `Agent`; substituting this class
     tests the pass-through before the real Agent takes these arguments, and keeps
     testing it afterwards (then the real __init__ sets them first and this one after).
+    The three Week 4c knobs and the ladder's repeat_note are named explicitly so the
+    signature check in _inherited_settings sees them here too.
     """
 
     built: list = []
 
-    def __init__(self, *args, max_repeats=3, wrap_up=True, context_window=None, **kwargs):
+    def __init__(self, *args, max_repeats=3, wrap_up=True, context_window=None, repeat_note=True, **kwargs):
         super().__init__(*args, **kwargs)
         self.max_repeats = max_repeats
         self.wrap_up = wrap_up
         self.context_window = context_window
+        self.repeat_note = repeat_note
         KnobbedAgent.built.append(self)
 
 
-def test_only_settings_the_agent_takes_are_passed_and_only_the_contracts_three():
+def test_only_settings_the_agent_takes_are_passed_and_only_the_inherited_ones():
     # Whatever week the real Agent is from, the child is built with names its
     # constructor accepts — the tests above already prove a child gets built — and
-    # never with a fourth. The class to ask is the one spawn.py builds from.
+    # never with one outside INHERITED_SETTINGS. The class to ask is the one spawn.py
+    # builds from.
     parent = _agent([])
     settings = _inherited_settings(parent)
 
     assert set(settings) <= set(inspect.signature(spawn_module.Agent.__init__).parameters)
     assert set(settings) <= set(INHERITED_SETTINGS)
+    assert set(settings) == set(INHERITED_SETTINGS)   # today's Agent takes all four
 
 
-def test_a_child_inherits_the_parents_repeat_cap_wrap_up_and_context_window(monkeypatch):
+def test_a_child_inherits_the_parents_repeat_cap_wrap_up_context_window_and_repeat_note(monkeypatch):
     monkeypatch.setattr(spawn_module, "Agent", KnobbedAgent)
     KnobbedAgent.built.clear()
     parent = KnobbedAgent(provider=ScriptedProvider([_spawn(), _final("ok"), _final()]),
                           registry=ToolRegistry([mark, SpawnAgent()]),
-                          max_repeats=5, wrap_up=False, context_window=4096)
+                          max_repeats=5, wrap_up=False, context_window=4096, repeat_note=False)
     parent.run("go")
 
     first, child = KnobbedAgent.built
     assert first is parent
-    assert (child.max_repeats, child.wrap_up, child.context_window) == (5, False, 4096)
+    assert (child.max_repeats, child.wrap_up, child.context_window, child.repeat_note) == (5, False, 4096, False)
     assert [m.text for m in _tool_messages(parent)] == [_reply("ok")]
 
 
-def test_a_parent_that_lacks_a_setting_yields_the_contracts_default(monkeypatch):
+def test_a_parent_that_lacks_a_setting_yields_the_agents_default(monkeypatch):
     # The getattr fallback: an Agent that takes the settings, built from a parent that
-    # exposes none of them, still gets its child — with the contract's defaults, which
-    # are the Agent's own (3, True, None), rather than a crash.
+    # exposes none of them, still gets its child — with the defaults, which are the
+    # Agent's own (3, True, None, True), rather than a crash.
     monkeypatch.setattr(spawn_module, "Agent", KnobbedAgent)
 
     class Bare:
         """A parent that exposes nothing."""
 
     assert _inherited_settings(Bare()) == INHERITED_SETTINGS
-    assert INHERITED_SETTINGS == {"max_repeats": 3, "wrap_up": True, "context_window": None}
+    assert INHERITED_SETTINGS == {"max_repeats": 3, "wrap_up": True, "context_window": None, "repeat_note": True}

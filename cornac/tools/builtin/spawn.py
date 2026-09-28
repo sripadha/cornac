@@ -39,7 +39,8 @@ spawn_agent is one more tool that takes a while and returns a string. The child 
     child's calls too, and one that crashes still fails closed there.
   - its own step budget (`child_max_steps`) and the parent's nudge budget — and,
     from Week 4c, the parent's repeat cap, wrap-up switch and context window
-    (max_repeats, wrap_up, context_window). Those are the user's choices about how
+    (max_repeats, wrap_up, context_window), plus the repeated-call note switch the
+    capability ladder added (repeat_note). Those are the user's choices about how
     a run behaves, and a child that quietly fell back to the defaults would be a
     run the user never configured. They are read off the parent and passed only
     when the Agent's constructor takes them, so this tool also works with an Agent
@@ -173,10 +174,14 @@ NO_DIGEST = "(nothing recorded)"
 # to tell an unfinished result from a finished reply or a refusal.
 _UNFINISHED_PREFIX = UNFINISHED_HEADER[: UNFINISHED_HEADER.index("{")]
 
-# Week 4c run settings a child inherits from its parent, with the defaults Agent gives
-# them. getattr falls back to these, so a parent that lacks one still gets its child
-# built; see _inherited_settings for when they are passed at all.
-INHERITED_SETTINGS = {"max_repeats": 3, "wrap_up": True, "context_window": None}
+# Run settings a child inherits from its parent, with the defaults Agent gives them:
+# the three Week 4c knobs and repeat_note, the knob the capability ladder added so a
+# level can run the loop without the repeated-call note (benchmark/ladder/levels.py,
+# GUARDS_OFF). Every loop knob the parent was configured with is on this list, so a
+# level that spawns children with the guards off runs its children with the guards
+# off too. getattr falls back to these, so a parent that lacks one still gets its
+# child built; see _inherited_settings for when they are passed at all.
+INHERITED_SETTINGS = {"max_repeats": 3, "wrap_up": True, "context_window": None, "repeat_note": True}
 
 # Events this tool fires on the PARENT's bus (see cornac.hooks.bus for the others):
 #   on_spawn(task, depth)          -> a child is about to run at this depth (1 = a
@@ -201,14 +206,15 @@ def _is_agent_bound(tool: Tool) -> bool:
 
 
 def _inherited_settings(parent: Agent) -> dict:
-    """The parent's Week 4c settings, ready for the child's constructor.
+    """The parent's loop settings (INHERITED_SETTINGS), ready for the child's constructor.
 
-    Only the settings the Agent's constructor actually takes are returned. These
-    three arrive with the Week 4c core change, and this tool has to work on both
-    sides of it: with an Agent from before (nothing is passed, the child gets the
-    defaults) and with one from after (the parent's values, so a run configured to
-    give up early on repeats, to skip the wrap-up call or to clear context at a
-    given window size is configured that way all the way down the tree). Checking
+    Only the settings the Agent's constructor actually takes are returned. Three of
+    them arrive with the Week 4c core change and repeat_note with the ladder's, and
+    this tool has to work on both sides of each: with an Agent from before (nothing
+    is passed, the child gets the defaults) and with one from after (the parent's
+    values, so a run configured to give up early on repeats, to skip the wrap-up
+    call, to clear context at a given window size or to leave repeated results
+    unannotated is configured that way all the way down the tree). Checking
     the signature rather than a version number is what a duck-typed harness does
     everywhere else — the agent asks a tool hasattr(bind_parent), not what week it
     is from. `Agent` is looked up at call time so a test can substitute one.
@@ -382,8 +388,8 @@ class SpawnAgent(Tool):
         # with more privilege than the agent that asked for it, and a session
         # "always"/"never" remembered on the policy applies to the child too. The
         # bus is the child's own, but it puts every tool call through the parent's
-        # veto hooks (see _child_bus). The Week 4c run settings (repeat cap, wrap-up,
-        # context window) are the parent's as well, for the same reason the nudge
+        # veto hooks (see _child_bus). The run settings (repeat cap, wrap-up, context
+        # window, repeat note) are the parent's as well, for the same reason the nudge
         # budget is: how a run behaves is the user's call, not the model's.
         child = Agent(
             provider=parent.provider,

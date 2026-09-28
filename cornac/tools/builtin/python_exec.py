@@ -28,6 +28,14 @@ files. In the model spike (benchmark/spike/) one model redefined the buggy funct
 inside a run_python snippet, saw its own test pass, and reported the file fixed — the
 file on disk was untouched. A snippet is a scratch cell; edit_file (a few lines) or
 write_file (the whole file) is how a file changes, and the description says so.
+
+That sentence is Week 4b scaffolding and names edit_file. Level 3 of the capability
+ladder (benchmark/ladder) is the round-two tool set, which has run_python but no
+edit_file, and a model told about a tool it does not have calls a tool that does not
+exist — a penalty round two never paid and the ladder must not charge to the level
+meant to reproduce it. So, as with run_bash and write_file, the description follows
+the instance: `edit_hint=False` is round two's text verbatim (git c381aed), and the
+default keeps today's text byte for byte.
 """
 
 from __future__ import annotations
@@ -51,26 +59,45 @@ HEAD_CHARS = 40_000
 TAIL_CHARS = 10_000
 
 
+# The description in two forms: ROUND2 is what the round-two spike measured with (git
+# c381aed, before Week 4b), verbatim; ROUND3 adds the workspace and does-not-edit
+# sentences the module docstring explains, and is what the tool ships with today.
+RUN_PYTHON_DESCRIPTION_ROUND2 = (
+    "Run a Python 3 code snippet from the workspace root and return whatever it "
+    "prints to stdout (and any error). Import what you need; print your results. "
+    "The value of a final bare expression is printed too, like a notebook cell. "
+    "A non-zero exit status is reported as '(exit code N)'."
+)
+RUN_PYTHON_DESCRIPTION_ROUND3 = (
+    "Run a Python 3 code snippet in the workspace root and return whatever it "
+    "prints to stdout (and any error). Import what you need; print your results. "
+    "The value of a final bare expression is printed too, like a notebook cell. "
+    "A non-zero exit status is reported as '(exit code N)'. The snippet already "
+    "runs in the workspace (no cd needed) and does NOT edit source files: a "
+    "function redefined here lives only in the snippet. To change a file use "
+    "edit_file (a few lines) or write_file (the whole file)."
+)
+
+
 class RunPython(Tool):
     name = "run_python"
-    description = (
-        "Run a Python 3 code snippet in the workspace root and return whatever it "
-        "prints to stdout (and any error). Import what you need; print your results. "
-        "The value of a final bare expression is printed too, like a notebook cell. "
-        "A non-zero exit status is reported as '(exit code N)'. The snippet already "
-        "runs in the workspace (no cd needed) and does NOT edit source files: a "
-        "function redefined here lives only in the snippet. To change a file use "
-        "edit_file (a few lines) or write_file (the whole file)."
-    )
+    description = RUN_PYTHON_DESCRIPTION_ROUND3
     input_schema = {
         "type": "object",
         "properties": {"code": {"type": "string", "description": "Python source to execute"}},
         "required": ["code"],
     }
 
-    def __init__(self, workspace: Workspace, timeout: float = DEFAULT_TIMEOUT):
+    def __init__(self, workspace: Workspace, timeout: float = DEFAULT_TIMEOUT, edit_hint: bool = True):
+        """`edit_hint` False gives the model round two's description: nothing about
+        where the snippet runs and no edit_file/write_file to point at (see the module
+        docstring). It changes the description only; the snippet runs the same."""
         self.ws = workspace
         self.timeout = timeout
+        self.edit_hint = edit_hint
+        # On the instance, so ToolRegistry.schemas() hands the provider the text that
+        # describes THIS tool — the same arrangement as write_file (files.py).
+        self.description = RUN_PYTHON_DESCRIPTION_ROUND3 if edit_hint else RUN_PYTHON_DESCRIPTION_ROUND2
 
     def run(self, arguments: dict) -> str:
         code = arguments["code"]

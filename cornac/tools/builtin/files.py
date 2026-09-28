@@ -44,6 +44,20 @@ edit whose `old` equalled its `new` was reported as "replaced 1 occurrence" — 
 the model took for a fix. Both tools also read and write the file's bytes as they
 are: a CRLF file stays CRLF, a byte-order mark survives, and a file that is not UTF-8
 is refused rather than rewritten with replacement characters outside the snippet.
+
+Why write_file and edit_file take flags (the capability ladder)
+---------------------------------------------------------------
+benchmark/ladder asks what each piece of scaffolding above is actually worth. It runs
+the SAME frozen model on the same tasks six times, adding one thing per level, and
+level 3 is "the round-two harness": write_file with no gate and no report, and no
+edit_file at all. A tool that always gates and always reports cannot be measured
+against itself, so the two behaviours are constructor flags —
+`WriteFile(workspace, syntax_gate=True, change_report=True)` and
+`EditFile(workspace, syntax_gate=True)` — and the level that switches them off gets the
+round-two tool back, description included. The defaults keep today's behaviour byte
+for byte: default_tools() passes neither flag, so nothing built on it changes. The
+flags exist so the ladder can measure the gate and the report as separate rungs, not
+so anyone runs a coding agent without them.
 """
 
 from __future__ import annotations
@@ -333,6 +347,69 @@ def _time_limit(seconds: float):
         signal.signal(signal.SIGALRM, previous)
 
 
+# --- what write_file and edit_file tell the model about themselves -----------------
+
+# The model reads a tool's description to decide when and how to call it, so the
+# description has to describe THIS instance: a write_file built without the gate must
+# not promise one, and one built without the report must not promise "created or
+# overwritten". The text is kept as separate sentences and assembled per instance, so
+# that the default (every piece on) is today's description byte for byte.
+_WRITE_INTRO = "Write text to a file in the workspace, creating parent directories as needed. "
+# With the Week 4b scaffolding on, the model is pointed at edit_file for small changes.
+_WRITE_OVERWRITES_USE_EDIT = (
+    "Overwrites the WHOLE file if it exists, so to change a few lines of an existing "
+    "file use edit_file instead. "
+)
+# With all of it off — level 3 of the ladder, the round-two harness — the round-two
+# sentence, verbatim. There was no edit_file to point at then, and a model told about
+# a tool it does not have calls a tool that does not exist ("Unknown tool" from the
+# registry): a penalty round two never paid, and one the ladder must not charge to the
+# level that is meant to reproduce it.
+_WRITE_OVERWRITES_PLAIN = "Overwrites if the file exists. "
+_WRITE_GATE = (
+    "For a .py path the content must parse as Python or the write is refused and the "
+    "file left unchanged. "
+)
+_WRITE_REPORT = (
+    "The result says whether the file was created or overwritten, its size before and "
+    "after, and (for .py) any top-level functions or classes that disappeared. "
+)
+_EDIT_INTRO = (
+    "Replace ONE exact snippet of text in a file with new text, leaving the rest of "
+    "the file untouched. This is the preferred way to change a few lines; use "
+    "write_file only to create a file or replace all of it. `old` must match the "
+    "file text exactly, including indentation and line breaks, and must occur "
+    "exactly once (include a neighbouring line or two to make it unique). "
+)
+_EDIT_GATE = (
+    "For a .py path the edited file must still parse as Python or the edit is refused "
+    "and the file left unchanged. "
+)
+_PATHS_RELATIVE = "Paths are relative to the workspace root."
+
+
+def _write_file_description(syntax_gate: bool, change_report: bool) -> str:
+    """write_file's description for these flags. Both True is today's text exactly.
+
+    The edit_file hint goes with the scaffolding as a whole: with either flag on this
+    is the Week 4b tool, which was designed alongside edit_file; with both off it is
+    the round-two tool, and round two had no edit_file (see _WRITE_OVERWRITES_PLAIN).
+    """
+    scaffolded = syntax_gate or change_report
+    return (
+        _WRITE_INTRO
+        + (_WRITE_OVERWRITES_USE_EDIT if scaffolded else _WRITE_OVERWRITES_PLAIN)
+        + (_WRITE_GATE if syntax_gate else "")
+        + (_WRITE_REPORT if change_report else "")
+        + _PATHS_RELATIVE
+    )
+
+
+def _edit_file_description(syntax_gate: bool) -> str:
+    """edit_file's description for this flag. True is today's text exactly."""
+    return _EDIT_INTRO + (_EDIT_GATE if syntax_gate else "") + _PATHS_RELATIVE
+
+
 # --- the tools ------------------------------------------------------------------
 
 class ReadFile(Tool):
@@ -362,15 +439,9 @@ class ReadFile(Tool):
 
 class WriteFile(Tool):
     name = "write_file"
-    description = (
-        "Write text to a file in the workspace, creating parent directories as needed. "
-        "Overwrites the WHOLE file if it exists, so to change a few lines of an existing "
-        "file use edit_file instead. For a .py path the content must parse as Python or "
-        "the write is refused and the file left unchanged. The result says whether the "
-        "file was created or overwritten, its size before and after, and (for .py) any "
-        "top-level functions or classes that disappeared. Paths are relative to the "
-        "workspace root."
-    )
+    # The class attribute is the default tool's text; __init__ sets the instance's own
+    # from its flags, and the registry reads the instance (see _write_file_description).
+    description = _write_file_description(syntax_gate=True, change_report=True)
     input_schema = {
         "type": "object",
         "properties": {
@@ -380,8 +451,23 @@ class WriteFile(Tool):
         "required": ["path", "content"],
     }
 
-    def __init__(self, workspace: Workspace):
+    def __init__(self, workspace: Workspace, syntax_gate: bool = True, change_report: bool = True):
+        """`syntax_gate` and `change_report` switch the two Week 4b behaviours off.
+
+        Both default to on, and default_tools() passes neither, so every existing
+        caller gets the tool the module docstring describes. They exist for the
+        capability ladder (benchmark/ladder), whose level 3 is the round-two harness:
+        WriteFile(ws, syntax_gate=False, change_report=False) is that tool — a broken
+        .py goes to disk, and the result is "wrote <path>: N chars" — so the gate and
+        the report can be measured as their own rung rather than assumed to be worth
+        what round three suggested. The description the model reads follows the
+        flags, because a description that promises a gate the tool does not have is
+        a lie the model would act on.
+        """
         self.ws = workspace
+        self.syntax_gate = syntax_gate
+        self.change_report = change_report
+        self.description = _write_file_description(syntax_gate, change_report)
 
     def run(self, arguments: dict) -> str:
         path = self.ws.resolve(arguments["path"])  # raises if outside sandbox
@@ -389,30 +475,41 @@ class WriteFile(Tool):
         content = arguments["content"]
 
         # Gate first: nothing on disk changes (not even a parent directory) unless
-        # the content is acceptable.
-        refusal = _syntax_refusal(rel, content, verb="write")
-        if refusal:
-            return refusal
+        # the content is acceptable. With the gate off (level 3 of the ladder) the
+        # content goes to disk as it is, broken or not, exactly as round two's did.
+        if self.syntax_gate:
+            refusal = _syntax_refusal(rel, content, verb="write")
+            if refusal:
+                return refusal
         if path.is_dir():
             return f"Error: is a directory: {rel}"
 
-        # Decoded for the report only — the old text is never written back, so an
-        # undecodable byte becoming U+FFFD costs nothing here. The raw bytes are
-        # decoded (rather than read_text) so CRLF is not translated and the size
-        # reported is the size on disk.
-        old = path.read_bytes().decode("utf-8", errors="replace") if path.is_file() else None
-
-        # The change report is worked out BEFORE the write. It parses the old file,
-        # which the gate never saw (it may have reached the disk through run_bash or
-        # a checkout), and a parse can fail. Anything that can fail after the file
-        # has changed tells the model the write failed when it succeeded — the model
-        # then retries, and the repeated-call note does not even catch it because
-        # the second result differs. So: compute first, write last.
-        removed = _removed_top_level(old, content) if old is not None and _is_python(rel) else []
+        # The change report needs the old file, and is worked out BEFORE the write.
+        # It parses that file, which the gate never saw (it may have reached the disk
+        # through run_bash or a checkout), and a parse can fail. Anything that can
+        # fail after the file has changed tells the model the write failed when it
+        # succeeded — the model then retries, and the repeated-call note does not
+        # even catch it because the second result differs. So: compute first, write
+        # last. With the report off nothing is read: the round-two tool did not look.
+        old = None
+        removed: list[str] = []
+        if self.change_report:
+            # Decoded for the report only — the old text is never written back, so an
+            # undecodable byte becoming U+FFFD costs nothing here. The raw bytes are
+            # decoded (rather than read_text) so CRLF is not translated and the size
+            # reported is the size on disk.
+            old = path.read_bytes().decode("utf-8", errors="replace") if path.is_file() else None
+            if old is not None and _is_python(rel):
+                removed = _removed_top_level(old, content)
         path.parent.mkdir(parents=True, exist_ok=True)
         # newline="": the content goes to disk byte for byte, CRLF included.
         path.write_text(content, encoding="utf-8", newline="")
 
+        if not self.change_report:
+            # The round-two report: how many characters landed, and not a word about
+            # what they replaced. This is the message that said "Wrote 179 chars" over
+            # a file that had just lost two functions (module docstring).
+            return f"wrote {rel}: {len(content)} chars"
         if old is None:
             return f"created {rel}: {len(content)} chars"
 
@@ -427,15 +524,8 @@ class WriteFile(Tool):
 
 class EditFile(Tool):
     name = "edit_file"
-    description = (
-        "Replace ONE exact snippet of text in a file with new text, leaving the rest of "
-        "the file untouched. This is the preferred way to change a few lines; use "
-        "write_file only to create a file or replace all of it. `old` must match the "
-        "file text exactly, including indentation and line breaks, and must occur "
-        "exactly once (include a neighbouring line or two to make it unique). For a "
-        ".py path the edited file must still parse as Python or the edit is refused "
-        "and the file left unchanged. Paths are relative to the workspace root."
-    )
+    # The default tool's text; the instance's own is set from its flag in __init__.
+    description = _edit_file_description(syntax_gate=True)
     input_schema = {
         "type": "object",
         "properties": {
@@ -448,8 +538,17 @@ class EditFile(Tool):
         "required": ["path", "old", "new"],
     }
 
-    def __init__(self, workspace: Workspace):
+    def __init__(self, workspace: Workspace, syntax_gate: bool = True):
+        """`syntax_gate` False skips the Python compile check; see WriteFile.__init__.
+
+        No level of the ladder runs edit_file without its gate — level 4 turns the
+        tool and its gate on together — but the flag is there so the gate can be
+        measured on its own should the question come up, and so the two tools that
+        share the gate share the knob.
+        """
         self.ws = workspace
+        self.syntax_gate = syntax_gate
+        self.description = _edit_file_description(syntax_gate)
 
     def run(self, arguments: dict) -> str:
         path = self.ws.resolve(arguments["path"])  # raises if outside sandbox
@@ -515,9 +614,10 @@ class EditFile(Tool):
                 "is unchanged."
             )
 
-        refusal = _syntax_refusal(rel, updated, verb="edit")
-        if refusal:
-            return refusal
+        if self.syntax_gate:
+            refusal = _syntax_refusal(rel, updated, verb="edit")
+            if refusal:
+                return refusal
 
         path.write_text(updated, encoding="utf-8", newline="")  # newline="": no translation
         # Report where the replacement now sits, so the model can read_file and check.
